@@ -118,7 +118,7 @@
 start_link() ->
     {ok, Members} = plumtree_peer_service_manager:members(),
     {InitEagers, InitLazys} = init_peers(Members),
-    Mods = app_helper:get_env(plumtree, broadcast_mods, [plumtree_metadata_manager]),
+    Mods = app_helper:get_env(plumtree, broadcast_mods, []),
     Res = start_link(Members, InitEagers, InitLazys, Mods),
     plumtree_peer_service_events:add_sup_callback(fun ?MODULE:update/1),
     Res.
