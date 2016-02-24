@@ -4,4 +4,4 @@ docs:
 	${REBAR} doc skip_deps=true
 
 xref: compile
-	${REBAR} xref skip_deps=true
+	${REBAR} xref
