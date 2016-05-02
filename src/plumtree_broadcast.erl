@@ -116,11 +116,12 @@
 %% to generate membership updates as the ring changes.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
-    {ok, Members} = plumtree_peer_service_manager:members(),
+    PeerService = application:get_env(plumtree, peer_service, plumtree_peer_service),
+    {ok, Members} = PeerService:members(),
     {InitEagers, InitLazys} = init_peers(Members),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
     Res = start_link(Members, InitEagers, InitLazys, Mods),
-    plumtree_peer_service_events:add_sup_callback(fun ?MODULE:update/1),
+    PeerService:add_sup_callback(fun ?MODULE:update/1),
     Res.
 
 %% @doc Starts the broadcast server on this node. `InitMembers' must be a list

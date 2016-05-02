@@ -27,7 +27,9 @@
          attempt_join/2,
          leave/1,
          stop/0,
-         stop/1]).
+         stop/1,
+         members/0,
+         add_sup_callback/1]).
 
 -include("plumtree.hrl").
 
@@ -47,6 +49,15 @@ join(Node, Node, _) ->
 join(_, Node, _Auto) ->
     attempt_join(Node).
 
+%% @doc Return cluster members.
+members() ->
+    plumtree_peer_service_manager:members().
+
+%% @doc Add callback.
+add_sup_callback(Function) ->
+    plumtree_peer_service_events:add_sup_callback(Function).
+
+%% @private
 attempt_join(Node) ->
     lager:info("Sent join request to: ~p~n", [Node]),
     case net_kernel:connect(Node) of
@@ -58,6 +69,7 @@ attempt_join(Node) ->
             attempt_join(Node, Local)
     end.
 
+%% @private
 attempt_join(Node, Local) ->
     {ok, Remote} = gen_server:call({plumtree_peer_service_gossip, Node}, send_state),
     Merged = ?SET:merge(Remote, Local),
@@ -69,6 +81,7 @@ attempt_join(Node, Local) ->
     _ = [gen_server:cast({plumtree_peer_service_gossip, P}, {receive_state, Merged}) || P <- Members, P /= node()],
     ok.
 
+%% @doc Attempt to leave the cluster.
 leave(_Args) when is_list(_Args) ->
     {ok, Local} = plumtree_peer_service_manager:get_local_state(),
     {ok, Actor} = plumtree_peer_service_manager:get_actor(),
@@ -94,13 +107,16 @@ leave(_Args) when is_list(_Args) ->
 leave(_Args) ->
     leave([]).
 
+%% @doc Stop.
 stop() ->
     stop("received stop request").
 
+%% @doc Stop for a given reason.
 stop(Reason) ->
     lager:notice("~p", [Reason]),
     init:stop().
 
+%% @private
 random_peer(Leave) ->
     Members = ?SET:value(Leave),
     Peers = [P || P <- Members],
