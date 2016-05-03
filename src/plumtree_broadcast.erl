@@ -153,7 +153,11 @@ broadcast(Broadcast, Mod) ->
     gen_server:cast(?SERVER, {broadcast, MessageId, Payload, Mod}).
 
 %% @doc Notifies broadcast server of membership update 
-update(LocalState) ->
+update(LocalState0) ->
+    PeerService = application:get_env(plumtree,
+                                      peer_service,
+                                      plumtree_peer_service),
+    LocalState = PeerService:decode(LocalState0),
     gen_server:cast(?SERVER, {update, LocalState}).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
@@ -271,8 +275,8 @@ handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
     Result = Mod:graft(MessageId),
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
-handle_cast({update, LocalState}, State=#state{all_members=BroadcastMembers}) ->
-    Members = ?SET:value(LocalState),
+handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
+    lager:info("Update called with members: ~p", [Members]),
     CurrentMembers = ordsets:from_list(Members),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
