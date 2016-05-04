@@ -276,7 +276,6 @@ handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
-    lager:info("Update called with members: ~p", [Members]),
     CurrentMembers = ordsets:from_list(Members),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
