@@ -35,8 +35,8 @@
 -include("plumtree.hrl").
 
 get_cluster_members(Node) ->
-    {Node, {ok, Res}} = {Node, rpc:call(Node, plumtree_peer_service_manager, get_local_state, [])},
-    ?SET:value(Res).
+    {Node, {ok, Members}} = {Node, rpc:call(Node, partisan_peer_service, members, [])},
+    Members.
 
 pmap(F, L) ->
     Parent = self(),

@@ -34,12 +34,7 @@ start_link() ->
 
 init([]) ->
     Children = lists:flatten(
-                 [
-                 ?CHILD(plumtree_peer_service_manager, worker),
-                 ?CHILD(plumtree_peer_service_gossip, worker),
-                 ?CHILD(plumtree_peer_service_events, worker),
-                 ?CHILD(plumtree_broadcast, worker)
-                 ]),
+                 [?CHILD(plumtree_broadcast, worker)]),
     RestartStrategy = {one_for_one, 10, 10},
     {ok, {RestartStrategy, Children}}.
 

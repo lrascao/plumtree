@@ -116,7 +116,7 @@
 %% to generate membership updates as the ring changes.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
-    PeerService = application:get_env(plumtree, peer_service, plumtree_peer_service),
+    PeerService = application:get_env(plumtree, peer_service, partisan_peer_service),
     {ok, Members} = PeerService:members(),
     {InitEagers, InitLazys} = init_peers(Members),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
@@ -152,11 +152,11 @@ broadcast(Broadcast, Mod) ->
     {MessageId, Payload} = Mod:broadcast_data(Broadcast),
     gen_server:cast(?SERVER, {broadcast, MessageId, Payload, Mod}).
 
-%% @doc Notifies broadcast server of membership update 
+%% @doc Notifies broadcast server of membership update
 update(LocalState0) ->
     PeerService = application:get_env(plumtree,
                                       peer_service,
-                                      plumtree_peer_service),
+                                      partisan_peer_service),
     LocalState = PeerService:decode(LocalState0),
     gen_server:cast(?SERVER, {update, LocalState}).
 

@@ -25,7 +25,8 @@
 -include("plumtree.hrl").
 
 members([]) ->
-    {ok, Members} = plumtree_peer_service_manager:members(),
+    PeerService = application:get_env(plumtree, peer_service, partisan_peer_service),
+    {ok, Members} = PeerService:members(),
     print_members(Members).
 
 print_members(Members) ->
