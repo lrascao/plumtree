@@ -565,8 +565,9 @@ all_peers(Root, Sets, Default) ->
 send(Msg, Peers) when is_list(Peers) ->
     [send(Msg, P) || P <- Peers];
 send(Msg, P) ->
+    partisan_peer_service_manager:forward_message(P, ?SERVER, Msg).
     %% TODO: add debug logging
-    gen_server:cast({?SERVER, P}, Msg).
+    %% gen_server:cast({?SERVER, P}, Msg).
 
 schedule_lazy_tick() ->
     schedule_tick(lazy_tick, broadcast_lazy_timer, 1000).
