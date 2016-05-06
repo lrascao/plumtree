@@ -565,7 +565,11 @@ all_peers(Root, Sets, Default) ->
 send(Msg, Peers) when is_list(Peers) ->
     [send(Msg, P) || P <- Peers];
 send(Msg, P) ->
-    partisan_peer_service_manager:forward_message(P, ?SERVER, Msg).
+    PeerService = application:get_env(plumtree,
+                                      peer_service,
+                                      partisan_peer_service),
+    PeerServiceManager = PeerService:manager(),
+    PeerServiceManager:forward_message(P, ?SERVER, Msg).
     %% TODO: add debug logging
     %% gen_server:cast({?SERVER, P}, Msg).
 
