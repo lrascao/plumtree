@@ -389,7 +389,6 @@ eager_push(MessageId, Message, Mod, State) ->
 
 eager_push(MessageId, Message, Mod, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
-    lager:info("Eager peers: ~p", [Peers]),
     _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Peers),
     State.
 
@@ -641,8 +640,4 @@ init_peers(Members) ->
     {InitEagers, InitLazys}.
 
 myself() ->
-    PeerService = application:get_env(plumtree,
-                                      peer_service,
-                                      partisan_peer_service),
-    PeerServiceManager = PeerService:manager(),
-    PeerServiceManager:myself().
+    node().
