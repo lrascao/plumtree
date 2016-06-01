@@ -177,7 +177,7 @@ broadcast_members(Timeout) ->
 %% @doc return a list of exchanges, started by broadcast on thisnode, that are running
 -spec exchanges() -> exchanges().
 exchanges() ->
-    exchanges(node()).
+    exchanges(myself()).
 
 %% @doc returns a list of exchanges, started by broadcast on `Node', that are running
 -spec exchanges(node()) -> exchanges().
@@ -292,7 +292,8 @@ handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
     State1 = case ordsets:size(New) > 0 of
-                 false -> State;
+                 false ->
+                     State;
                  true ->
                      {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
                      reset_peers(CurrentMembers, EagerPeers, LazyPeers, State)
@@ -330,7 +331,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 handle_broadcast(false, _MessageId, _Message, _Mod, _Round, Root, From, State) -> %% stale msg
     State1 = add_lazy(From, Root, State),
-    _ = send({prune, Root, node()}, From),
+    _ = send({prune, Root, myself()}, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
     State1 = add_eager(From, Root, State),
@@ -338,11 +339,11 @@ handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% 
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
 
 handle_ihave(true, MessageId, Mod, Round, Root, From, State) -> %% stale i_have
-    _ = send({ignored_i_have, MessageId, Mod, Round, Root, node()}, From),
+    _ = send({ignored_i_have, MessageId, Mod, Round, Root, myself()}, From),
     State;
 handle_ihave(false, MessageId, Mod, Round, Root, From, State) -> %% valid i_have
     %% TODO: don't graft immediately
-    _ = send({graft, MessageId, Mod, Round, Root, node()}, From),
+    _ = send({graft, MessageId, Mod, Round, Root, myself()}, From),
     add_eager(From, Root, State).
 
 handle_graft(stale, MessageId, Mod, Round, Root, From, State) ->
@@ -355,7 +356,7 @@ handle_graft({ok, Message}, MessageId, Mod, Round, Root, From, State) ->
     %% instead we will allow the i_have to be sent once more and let the subsequent
     %% ignore serve as the ack.
     State1 = add_eager(From, Root, State),
-    _ = send({broadcast, MessageId, Message, Mod, Round, Root, node()}, From),
+    _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, From),
     State1;
 handle_graft({error, Reason}, _MessageId, Mod, _Round, _Root, _From, State) ->
     lager:error("unable to graft message from ~p. reason: ~p", [Mod, Reason]),
@@ -383,16 +384,16 @@ neighbors_down(Removed, State=#state{common_eagers=CommonEagers,eager_sets=Eager
                 outstanding=NewOutstanding}.
 
 eager_push(MessageId, Message, Mod, State) ->
-    eager_push(MessageId, Message, Mod, 0, node(), node(), State).
+    eager_push(MessageId, Message, Mod, 0, myself(), myself(), State).
 
 eager_push(MessageId, Message, Mod, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
     lager:info("Eager peers: ~p", [Peers]),
-    _ = send({broadcast, MessageId, Message, Mod, Round, Root, node()}, Peers),
+    _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Peers),
     State.
 
 schedule_lazy_push(MessageId, Mod, State) ->
-    schedule_lazy_push(MessageId, Mod, 0, node(), node(), State).
+    schedule_lazy_push(MessageId, Mod, 0, myself(), myself(), State).
 
 schedule_lazy_push(MessageId, Mod, Round, Root, From, State) ->
     Peers = lazy_peers(Root, From, State),
@@ -406,7 +407,7 @@ send_lazy(Peer, Messages) ->
         {MessageId, Mod, Round, Root} <- ordsets:to_list(Messages)].
 
 send_lazy(MessageId, Mod, Round, Root, Peer) ->
-    send({i_have, MessageId, Mod, Round, Root, node()}, Peer).
+    send({i_have, MessageId, Mod, Round, Root, myself()}, Peer).
 
 maybe_exchange(State) ->
     Root = random_root(State),
@@ -486,10 +487,10 @@ random_peer(Root, State=#state{all_members=All}) ->
     Eagers = all_eager_peers(Root, State),
     Lazys  = all_lazy_peers(Root, State),
     Union  = ordsets:union([Eagers, Lazys]),
-    Other  = ordsets:del_element(node(), ordsets:subtract(All, Union)),
+    Other  = ordsets:del_element(myself(), ordsets:subtract(All, Union)),
     case ordsets:size(Other) of
         0 ->
-            random_other_node(ordsets:del_element(node(), All));
+            random_other_node(ordsets:del_element(myself(), All));
         _ ->
             random_other_node(Other)
     end.
@@ -598,8 +599,8 @@ schedule_tick(Message, Timer, Default) ->
 
 reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
     State#state{
-      common_eagers = ordsets:del_element(node(), ordsets:from_list(EagerPeers)),
-      common_lazys  = ordsets:del_element(node(), ordsets:from_list(LazyPeers)),
+      common_eagers = ordsets:del_element(myself(), ordsets:from_list(EagerPeers)),
+      common_lazys  = ordsets:del_element(myself(), ordsets:from_list(LazyPeers)),
       eager_sets    = orddict:new(),
       lazy_sets     = orddict:new(),
       all_members   = ordsets:from_list(AllMembers)
@@ -613,26 +614,33 @@ init_peers(Members) ->
             InitLazys  = [];
         2 ->
             %% Two members, just eager push to the other
-            InitEagers = Members -- [node()],
+            InitEagers = Members -- [myself()],
             InitLazys  = [];
         N when N < 5 ->
             %% 2 to 4 members, start with a fully connected tree
             %% with cycles. it will be adjusted as needed
             Tree = plumtree_util:build_tree(1, Members, [cycles]),
-            InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - 2), Members -- [node() | InitEagers])];
+            InitEagers = orddict:fetch(myself(), Tree),
+            InitLazys  = [lists:nth(random:uniform(N - 2), Members -- [myself() | InitEagers])];
         N when N < 10 ->
             %% 5 to 9 members, start with gossip tree used by
             %% riak_core_gossip. it will be adjusted as needed
             Tree = plumtree_util:build_tree(2, Members, [cycles]),
-            InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - 3), Members -- [node() | InitEagers])];
+            InitEagers = orddict:fetch(myself(), Tree),
+            InitLazys  = [lists:nth(random:uniform(N - 3), Members -- [myself() | InitEagers])];
         N ->
             %% 10 or more members, use a tree similar to riak_core_gossip
             %% but with higher fanout (larger initial eager set size)
             NEagers = round(math:log(N) + 1),
             Tree = plumtree_util:build_tree(NEagers, Members, [cycles]),
-            InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
+            InitEagers = orddict:fetch(myself(), Tree),
+            InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [myself() | InitEagers])]
     end,
     {InitEagers, InitLazys}.
+
+myself() ->
+    PeerService = application:get_env(plumtree,
+                                      peer_service,
+                                      partisan_peer_service),
+    PeerServiceManager = PeerService:manager(),
+    PeerServiceManager:myself().
