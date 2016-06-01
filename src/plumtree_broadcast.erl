@@ -387,6 +387,7 @@ eager_push(MessageId, Message, Mod, State) ->
 
 eager_push(MessageId, Message, Mod, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
+    lager:info("Eager peers: ~p", [Peers]),
     _ = send({broadcast, MessageId, Message, Mod, Round, Root, node()}, Peers),
     State.
 
