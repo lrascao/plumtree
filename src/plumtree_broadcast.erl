@@ -259,10 +259,10 @@ handle_cast({broadcast, MessageId, Message, Mod}, State) ->
     {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
     lager:info("One messaged processed; messages remaining: ~p",
                [MessageQueueLen]),
-    case MessageQueueLen > 10000 of
+    case MessageQueueLen > 1000 of
         true ->
             {messages, Queue} = process_info(self(), messages),
-            lager:info("Last message: ~p", [lists:last(Queue)]);
+            [lager:info("Last message: ~p", [M]) || M <- Queue];
         false ->
             ok
     end,
