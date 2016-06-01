@@ -149,11 +149,9 @@ start_link(InitMembers, InitEagers, InitLazys, Mods) ->
 %% `riak_core_broadcast_handler' behaviour.
 -spec broadcast(any(), module()) -> ok.
 broadcast(Broadcast, Mod) ->
-    % lager:info("Brodcast triggered: ~p", [Broadcast]),
     {MessageId, Payload} = Mod:broadcast_data(Broadcast),
     MessageQueueLen = process_info(self(), message_queue_len),
-    lager:info("Enqueued; current size: ~p",
-               [MessageQueueLen]),
+    lager:info("Enqueued; current size: ~p", [MessageQueueLen]),
     gen_server:cast(?SERVER, {broadcast, MessageId, Payload, Mod}).
 
 %% @doc Notifies broadcast server of membership update
@@ -263,7 +261,7 @@ handle_cast({broadcast, MessageId, Message, Mod}, State) ->
                [MessageQueueLen]),
     case MessageQueueLen > 10000 of
         true ->
-            Queue = process_info(self(), messages),
+            {messages, Queue} = process_info(self(), messages),
             lager:info("Last message: ~p", [lists:last(Queue)]);
         false ->
             ok
