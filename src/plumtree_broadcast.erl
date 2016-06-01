@@ -150,7 +150,7 @@ start_link(InitMembers, InitEagers, InitLazys, Mods) ->
 -spec broadcast(any(), module()) -> ok.
 broadcast(Broadcast, Mod) ->
     {MessageId, Payload} = Mod:broadcast_data(Broadcast),
-    MessageQueueLen = process_info(self(), message_queue_len),
+    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
     lager:info("Enqueued; current size: ~p", [MessageQueueLen]),
     gen_server:cast(?SERVER, {broadcast, MessageId, Payload, Mod}).
 
@@ -256,7 +256,7 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
-    MessageQueueLen = process_info(self(), message_queue_len),
+    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
     lager:info("One messaged processed; messages remaining: ~p",
                [MessageQueueLen]),
     case MessageQueueLen > 10000 of
