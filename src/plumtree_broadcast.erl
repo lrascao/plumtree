@@ -158,7 +158,7 @@ update(LocalState0) ->
                                       peer_service,
                                       partisan_peer_service),
     LocalState = PeerService:decode(LocalState0),
-    lager:info("Update triggered with: ~p", [LocalState]),
+    % lager:info("Update triggered with: ~p", [LocalState]),
     gen_server:cast(?SERVER, {update, LocalState}).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
@@ -255,16 +255,16 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("broadcast/3 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("broadcast/3 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     State1 = eager_push(MessageId, Message, Mod, State),
     State2 = schedule_lazy_push(MessageId, Mod, State1),
     {noreply, State2};
 handle_cast({broadcast, MessageId, Message, Mod, Round, Root, From}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("broadcast/6 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("broadcast/6 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     Valid = Mod:merge(MessageId, Message),
     State1 = handle_broadcast(Valid, MessageId, Message, Mod, Round, Root, From, State),
     {noreply, State1};
