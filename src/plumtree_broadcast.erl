@@ -160,6 +160,7 @@ update(LocalState0) ->
                                       peer_service,
                                       partisan_peer_service),
     LocalState = PeerService:decode(LocalState0),
+    lager:info("Update triggered with: ~p", [LocalState]),
     gen_server:cast(?SERVER, {update, LocalState}).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
