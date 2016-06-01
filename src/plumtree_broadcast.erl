@@ -150,8 +150,6 @@ start_link(InitMembers, InitEagers, InitLazys, Mods) ->
 -spec broadcast(any(), module()) -> ok.
 broadcast(Broadcast, Mod) ->
     {MessageId, Payload} = Mod:broadcast_data(Broadcast),
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("Enqueued; current size: ~p", [MessageQueueLen]),
     gen_server:cast(?SERVER, {broadcast, MessageId, Payload, Mod}).
 
 %% @doc Notifies broadcast server of membership update
@@ -260,13 +258,6 @@ handle_cast({broadcast, MessageId, Message, Mod}, State) ->
     {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
     lager:info("One messaged processed; messages remaining: ~p",
                [MessageQueueLen]),
-    case MessageQueueLen > 1000 of
-        true ->
-            {messages, Queue} = process_info(self(), messages),
-            [lager:info("Last message: ~p", [M]) || M <- Queue];
-        false ->
-            ok
-    end,
     State1 = eager_push(MessageId, Message, Mod, State),
     State2 = schedule_lazy_push(MessageId, Mod, State1),
     {noreply, State2};
