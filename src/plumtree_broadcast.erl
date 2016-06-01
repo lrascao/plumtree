@@ -601,7 +601,6 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
      }.
 
 init_peers(Members) ->
-    lager:info("Init of peers: ~p from myself: ~p", [Members, myself()]),
     case length(Members) of
         1 ->
             %% Single member, must be ourselves
