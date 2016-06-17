@@ -478,18 +478,21 @@ random_root(#state{all_members=Members}) ->
 %% picks random peer favoring peers not in eager or lazy set and ensuring
 %% peer is not this node
 random_peer(Root, State=#state{all_members=All}) ->
+    lager:info("All: ~p", [All]),
     Eagers = all_eager_peers(Root, State),
     lager:info("Eager: ~p", [Eagers]),
     Lazys  = all_lazy_peers(Root, State),
     lager:info("Lazys: ~p", [Lazys]),
     Union  = ordsets:union([Eagers, Lazys]),
     Other  = ordsets:del_element(myself(), ordsets:subtract(All, Union)),
-    case ordsets:size(Other) of
+    Selected = case ordsets:size(Other) of
         0 ->
             random_other_node(ordsets:del_element(myself(), All));
         _ ->
             random_other_node(Other)
-    end.
+    end,
+    lager:info("Selected: ~p", [Selected]),
+    Selected.
 
 %% picks random node from ordset
 random_other_node(OrdSet) ->
