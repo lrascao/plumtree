@@ -587,7 +587,6 @@ all_peers(Root, Sets, Default) ->
     end.
 
 send(Msg, Peers) when is_list(Peers) ->
-    lager:info("Sending message to ~p", [Peers]),
     [send(Msg, P) || P <- Peers];
 send(Msg, P) ->
     PeerService = application:get_env(plumtree,
