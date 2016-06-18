@@ -479,7 +479,6 @@ random_root(#state{all_members=Members}) ->
 %% peer is not this node
 random_peer(Root, State=#state{all_members=All}) ->
     Mode = application:get_env(plumtree, exchange_selection, optimized),
-    lager:info("Node selection for exchange: ~p", [Mode]),
     Other = case Mode of
         %% Normal; randomly select a peer from the known membership at
         %% this node.
@@ -488,11 +487,8 @@ random_peer(Root, State=#state{all_members=All}) ->
         %% Optimized; attempt to find a peer that's not in the broadcast
         %% tree, to increase probability of selecting a lagging node.
         optimized ->
-            lager:info("All: ~p", [All]),
             Eagers = all_eager_peers(Root, State),
-            lager:info("Eager: ~p", [Eagers]),
             Lazys  = all_lazy_peers(Root, State),
-            lager:info("Lazys: ~p", [Lazys]),
             Union  = ordsets:union([Eagers, Lazys]),
             ordsets:del_element(myself(), ordsets:subtract(All, Union))
     end,
@@ -502,7 +498,6 @@ random_peer(Root, State=#state{all_members=All}) ->
         _ ->
             random_other_node(Other)
     end,
-    lager:info("Selected: ~p", [Selected]),
     Selected.
 
 %% picks random node from ordset
