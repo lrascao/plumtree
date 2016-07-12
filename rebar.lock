@@ -16,7 +16,7 @@
   1},
  {<<"partisan">>,
   {git,"git://github.com/lasp-lang/partisan.git",
-       {ref,"7246cca11f99864e45b09f77a475704e64683297"}},
+       {ref,"e885a3f1471f56d3c63093e64bd334d019125bbd"}},
   0},
  {<<"ranch">>,
   {git,"https://github.com/extend/ranch.git",
