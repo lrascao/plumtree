@@ -8,9 +8,10 @@
                   stdlib,
                   crypto,
                   lager,
-                  riak_dt
+                  riak_dt,
+                  rand_compat
                  ]},
-  {mod, { plumtree_app, []}},
+  {mod, {plumtree_app, []}},
   {modules, []},
   {env, [
          {plumtree_data_dir, "data"}]}
