@@ -340,10 +340,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 handle_broadcast(false, _MessageId, _Message, _Mod, _Round, Root, From, State) -> %% stale msg
+    lager:info("Message is stale, marking lazy and sending prune message..."),
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
+    lager:info("Message is not stale, forwarding..."),
     State1 = add_eager(From, Root, State),
     State2 = eager_push(MessageId, Message, Mod, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
