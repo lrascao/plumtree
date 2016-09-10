@@ -255,49 +255,49 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("broadcast/3 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("broadcast/3 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     State1 = eager_push(MessageId, Message, Mod, State),
     State2 = schedule_lazy_push(MessageId, Mod, State1),
     {noreply, State2};
 handle_cast({broadcast, MessageId, Message, Mod, Round, Root, From}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("broadcast/6 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("broadcast/6 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     Valid = Mod:merge(MessageId, Message),
     State1 = handle_broadcast(Valid, MessageId, Message, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({prune, Root, From}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("prune/2 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("prune/2 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     State1 = add_lazy(From, Root, State),
     {noreply, State1};
 handle_cast({i_have, MessageId, Mod, Round, Root, From}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("i_have/5 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("i_have/5 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     Stale = Mod:is_stale(MessageId),
     State1 = handle_ihave(Stale, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({ignored_i_have, MessageId, Mod, Round, Root, From}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("ignored_i_have/5 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("ignored_i_have/5 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     State1 = ack_outstanding(MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("graft/5 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("graft/5 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     Result = Mod:graft(MessageId),
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
-    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    lager:info("update/1 messaged processed; messages remaining: ~p",
-               [MessageQueueLen]),
+    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    % lager:info("update/1 messaged processed; messages remaining: ~p",
+    %            [MessageQueueLen]),
     CurrentMembers = ordsets:from_list(Members),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
@@ -340,12 +340,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 handle_broadcast(false, _MessageId, _Message, _Mod, _Round, Root, From, State) -> %% stale msg
-    lager:info("Message is stale, marking lazy and sending prune message..."),
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
-    lager:info("Message is not stale, forwarding..."),
     State1 = add_eager(From, Root, State),
     State2 = eager_push(MessageId, Message, Mod, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
