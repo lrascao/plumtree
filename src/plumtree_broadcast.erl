@@ -588,6 +588,7 @@ send(Msg, P) ->
                                       peer_service,
                                       partisan_peer_service),
     PeerServiceManager = PeerService:manager(),
+    instrument_transmission(Msg),
     PeerServiceManager:forward_message(P, ?SERVER, Msg).
     %% TODO: add debug logging
     %% gen_server:cast({?SERVER, P}, Msg).
@@ -643,5 +644,15 @@ init_peers(Members) ->
     end,
     {InitEagers, InitLazys}.
 
+%% @private
 myself() ->
     node().
+
+%% @private
+instrument_transmission(Term) ->
+    case partisan_config:get(transmission_logging_mfa, undefined) of
+        undefined ->
+            ok;
+        {Module, Function, Args} ->
+            erlang:apply(Module, Function, Args ++ [Term])
+    end.
