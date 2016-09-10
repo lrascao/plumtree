@@ -255,9 +255,9 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("broadcast/3 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
+    lager:info("broadcast/3 messaged processed; messages remaining: ~p",
+               [MessageQueueLen]),
     State1 = eager_push(MessageId, Message, Mod, State),
     State2 = schedule_lazy_push(MessageId, Mod, State1),
     {noreply, State2};
