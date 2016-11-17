@@ -669,7 +669,14 @@ instrument_transmission(Message, Mod) ->
         undefined ->
             ok;
         {Module, Function, Args} ->
-            ToLog = Mod:extract_log_type_and_payload(Message),
+            ToLog = try
+                Mod:extract_log_type_and_payload(Message)
+            catch
+                _:Error ->
+                    lager:info("Couldn't extract log type and payload. Reason ~p", [Error]),
+                    []
+            end,
+
             lists:foreach(
                 fun({Type, Payload}) ->
                     erlang:apply(Module, Function, Args ++ [Type, Payload])
