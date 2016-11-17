@@ -339,9 +339,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-handle_broadcast(false, _MessageId, _Message, _Mod, _Round, Root, From, State) -> %% stale msg
+handle_broadcast(false, _MessageId, _Message, Mod, _Round, Root, From, State) -> %% stale msg
     State1 = add_lazy(From, Root, State),
-    _ = send({prune, Root, myself()}, From),
+    _ = send({prune, Root, myself()}, Mod, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
     State1 = add_eager(From, Root, State),
@@ -349,11 +349,11 @@ handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% 
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
 
 handle_ihave(true, MessageId, Mod, Round, Root, From, State) -> %% stale i_have
-    _ = send({ignored_i_have, MessageId, Mod, Round, Root, myself()}, From),
+    _ = send({ignored_i_have, MessageId, Mod, Round, Root, myself()}, Mod, From),
     State;
 handle_ihave(false, MessageId, Mod, Round, Root, From, State) -> %% valid i_have
     %% TODO: don't graft immediately
-    _ = send({graft, MessageId, Mod, Round, Root, myself()}, From),
+    _ = send({graft, MessageId, Mod, Round, Root, myself()}, Mod, From),
     add_eager(From, Root, State).
 
 handle_graft(stale, MessageId, Mod, Round, Root, From, State) ->
@@ -366,7 +366,7 @@ handle_graft({ok, Message}, MessageId, Mod, Round, Root, From, State) ->
     %% instead we will allow the i_have to be sent once more and let the subsequent
     %% ignore serve as the ack.
     State1 = add_eager(From, Root, State),
-    _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, From),
+    _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Mod, From),
     State1;
 handle_graft({error, Reason}, _MessageId, Mod, _Round, _Root, _From, State) ->
     lager:error("unable to graft message from ~p. reason: ~p", [Mod, Reason]),
@@ -398,7 +398,7 @@ eager_push(MessageId, Message, Mod, State) ->
 
 eager_push(MessageId, Message, Mod, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
-    _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Peers),
+    _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Mod, Peers),
     State.
 
 schedule_lazy_push(MessageId, Mod, State) ->
@@ -416,7 +416,7 @@ send_lazy(Peer, Messages) ->
         {MessageId, Mod, Round, Root} <- ordsets:to_list(Messages)].
 
 send_lazy(MessageId, Mod, Round, Root, Peer) ->
-    send({i_have, MessageId, Mod, Round, Root, myself()}, Peer).
+    send({i_have, MessageId, Mod, Round, Root, myself()}, Mod, Peer).
 
 maybe_exchange(State) ->
     Root = random_root(State),
@@ -596,14 +596,14 @@ all_peers(Root, Sets, Default) ->
         {ok, Peers} -> Peers
     end.
 
-send(Msg, Peers) when is_list(Peers) ->
-    [send(Msg, P) || P <- Peers];
-send(Msg, P) ->
+send(Msg, Mod, Peers) when is_list(Peers) ->
+    [send(Msg, Mod, P) || P <- Peers];
+send(Msg, Mod, P) ->
     PeerService = application:get_env(plumtree,
                                       peer_service,
                                       partisan_peer_service),
     PeerServiceManager = PeerService:manager(),
-    instrument_transmission(Msg),
+    instrument_transmission(Msg, Mod),
     PeerServiceManager:forward_message(P, ?SERVER, Msg).
     %% TODO: add debug logging
     %% gen_server:cast({?SERVER, P}, Msg).
@@ -664,10 +664,16 @@ myself() ->
     node().
 
 %% @private
-instrument_transmission(Term) ->
+instrument_transmission(Message, Mod) ->
     case partisan_config:get(transmission_logging_mfa, undefined) of
         undefined ->
             ok;
         {Module, Function, Args} ->
-            erlang:apply(Module, Function, Args ++ [Term])
+            ToLog = Mod:extract_log_type_and_payload(Message),
+            lists:foreach(
+                fun({Type, Payload}) ->
+                    erlang:apply(Module, Function, Args ++ [Type, Payload])
+                end,
+                ToLog
+            )
     end.
