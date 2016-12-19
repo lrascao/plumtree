@@ -8,7 +8,6 @@
                   stdlib,
                   crypto,
                   lager,
-                  riak_dt,
                   rand_compat
                  ]},
   {mod, {plumtree_app, []}},
