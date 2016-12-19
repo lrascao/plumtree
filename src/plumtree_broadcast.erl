@@ -339,13 +339,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-handle_broadcast(false, _MessageId, Message, Mod, _Round, Root, From, State) -> %% stale msg
-    lager:info("Received stale message: ~p", [Message]),
+handle_broadcast(false, _MessageId, _Message, Mod, _Round, Root, From, State) -> %% stale msg
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, Mod, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
-    lager:info("Received valid message: ~p", [Message]),
     State1 = add_eager(From, Root, State),
     State2 = eager_push(MessageId, Message, Mod, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
