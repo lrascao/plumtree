@@ -1,20 +1,12 @@
-{application, plumtree,
- [
-  {description, "Epidemic Broadcast Trees"},
-  {vsn, "0.2.0"},
-  {registered, []},
-  {applications, [
-                  kernel,
-                  stdlib,
-                  crypto,
-                  lager,
-                  rand_compat
-                 ]},
-  {mod, {plumtree_app, []}},
-  {modules, []},
-  {env, [{plumtree_data_dir, "data"}]},
-
-  {maintainers, ["Chris Meiklejohn", "Tom Santero", "Andrew Thompson"]},
-  {licenses, ["Apache 2.0"]},
-  {links, [{"Github", "https://github.com/lasp-lang/plumtree"}]}
- ]}.
+{application,plumtree,
+             [{description,"Epidemic Broadcast Trees"},
+              {vsn,"0.2.1"},
+              {registered,[]},
+              {applications,[kernel,stdlib,crypto,lager,rand_compat]},
+              {mod,{plumtree_app,[]}},
+              {modules,[]},
+              {env,[{plumtree_data_dir,"data"}]},
+              {maintainers,["Chris Meiklejohn","Tom Santero",
+                            "Andrew Thompson"]},
+              {licenses,["Apache 2.0"]},
+              {links,[{"Github","https://github.com/lasp-lang/plumtree"}]}]}.
