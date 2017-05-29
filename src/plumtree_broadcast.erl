@@ -101,6 +101,7 @@
           %% which members have joined and left during a membership update
           all_members   :: ordsets:ordset(nodename()) | undefined
          }).
+-type state()           :: #state{}.
 
 %%%===================================================================
 %%% API
@@ -226,7 +227,7 @@ debug_get_tree(Root, Nodes) ->
 %%%===================================================================
 
 %% @private
--spec init([[any()],...]) -> {ok, #state{}}.
+-spec init([[any()], ...]) -> {ok, state()}.
 init([AllMembers, InitEagers, InitLazys, Mods]) ->
     schedule_lazy_tick(),
     schedule_exchange_tick(),
@@ -239,7 +240,7 @@ init([AllMembers, InitEagers, InitLazys, Mods]) ->
     {ok, State2}.
 
 %% @private
--spec handle_call(term(), {pid(), term()}, #state{}) -> {reply, term(), #state{}}.
+-spec handle_call(term(), {pid(), term()}, state()) -> {reply, term(), state()}.
 handle_call({get_peers, Root}, _From, State) ->
     EagerPeers = all_peers(Root, State#state.eager_sets, State#state.common_eagers),
     LazyPeers = all_peers(Root, State#state.lazy_sets, State#state.common_lazys),
@@ -253,7 +254,7 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
     {reply, Cancelled, State}.
 
 %% @private
--spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
+-spec handle_cast(term(), state()) -> {noreply, state()}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
     % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
     % lager:info("broadcast/3 messaged processed; messages remaining: ~p",
@@ -312,8 +313,8 @@ handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
     {noreply, State2}.
 
 %% @private
--spec handle_info('exchange_tick' | 'lazy_tick' | {'DOWN', _, 'process', _, _}, #state{}) ->
-    {noreply, #state{}}.
+-spec handle_info('exchange_tick' | 'lazy_tick' | {'DOWN', _, 'process', _, _}, state()) ->
+    {noreply, state()}.
 handle_info(lazy_tick, State) ->
     schedule_lazy_tick(),
     _ = send_lazy(State),
@@ -327,12 +328,12 @@ handle_info({'DOWN', Ref, process, _Pid, _Reason}, State=#state{exchanges=Exchan
     {noreply, State#state{exchanges=Exchanges1}}.
 
 %% @private
--spec terminate(term(), #state{}) -> term().
+-spec terminate(term(), state()) -> term().
 terminate(_Reason, _State) ->
     ok.
 
 %% @private
--spec code_change(term() | {down, term()}, #state{}, term()) -> {ok, #state{}}.
+-spec code_change(term() | {down, term()}, state(), term()) -> {ok, state()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -372,8 +373,8 @@ handle_graft({error, Reason}, _MessageId, Mod, _Round, _Root, _From, State) ->
     lager:error("unable to graft message from ~p. reason: ~p", [Mod, Reason]),
     State.
 
-neighbors_down(Removed, State=#state{common_eagers=CommonEagers,eager_sets=EagerSets,
-                                     common_lazys=CommonLazys,lazy_sets=LazySets,
+neighbors_down(Removed, State=#state{common_eagers=CommonEagers, eager_sets=EagerSets,
+                                     common_lazys=CommonLazys, lazy_sets=LazySets,
                                      outstanding=Outstanding}) ->
     NewCommonEagers = ordsets:subtract(CommonEagers, Removed),
     NewCommonLazys  = ordsets:subtract(CommonLazys, Removed),
@@ -425,7 +426,7 @@ maybe_exchange(State) ->
 
 maybe_exchange(undefined, State) ->
     State;
-maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
+maybe_exchange(Peer, State=#state{mods=[Mod | _], exchanges=Exchanges}) ->
     %% limit the number of exchanges this node can start concurrently.
     %% the exchange must (currently?) implement any "inbound" concurrency limits
     ExchangeLimit = app_helper:get_env(plumtree, broadcast_start_exchange_limit, 1),
@@ -439,7 +440,7 @@ maybe_exchange(_Peer, State=#state{mods=[]}) ->
     %% No registered handler.
     State.
 
-exchange(Peer, State=#state{mods=[Mod | Mods],exchanges=Exchanges}) ->
+exchange(Peer, State=#state{mods=[Mod | Mods], exchanges=Exchanges}) ->
     State1 = case Mod:exchange(Peer) of
                  {ok, Pid} ->
                      lager:debug("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
@@ -569,7 +570,7 @@ update_peers(From, Root, EagerUpdate, LazyUpdate, State) ->
     NewLazys  = LazyUpdate(From, CurrentLazys),
     set_peers(Root, NewEagers, NewLazys, State).
 
-set_peers(Root, Eagers, Lazys, State=#state{eager_sets=EagerSets,lazy_sets=LazySets}) ->
+set_peers(Root, Eagers, Lazys, State=#state{eager_sets=EagerSets, lazy_sets=LazySets}) ->
     NewEagers = orddict:store(Root, Eagers, EagerSets),
     NewLazys = orddict:store(Root, Lazys, LazySets),
     State#state{eager_sets=NewEagers, lazy_sets=NewLazys}.

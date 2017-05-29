@@ -13,6 +13,9 @@ test: common_test
 common_test:
 	$(REBAR) ct
 
+lint:
+	${REBAR} as lint lint
+
 compile:
 	$(REBAR) compile
 

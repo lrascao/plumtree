@@ -8,6 +8,7 @@ script:
   - make test
   - make xref
   - make dialyzer
+  - make lint
 notifications:
   email: christopher.meiklejohn@gmail.com
   slack: lasp-lang:hiPRNnbUa3zdGrrXZfGRAF7D
