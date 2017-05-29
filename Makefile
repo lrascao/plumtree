@@ -8,10 +8,13 @@ all: compile
 
 include tools.mk
 
-test: common_test
+test: common_test cover
 
 common_test:
 	$(REBAR) ct
+
+cover:
+	$(REBAR) cover
 
 lint:
 	${REBAR} as lint lint
