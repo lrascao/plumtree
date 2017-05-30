@@ -120,6 +120,8 @@ start_link() ->
     PeerService = application:get_env(plumtree, peer_service, partisan_peer_service),
     {ok, Members} = PeerService:members(),
     {InitEagers, InitLazys} = init_peers(Members),
+    plumtree_util:log(debug, "init peers, eager: ~p, lazy: ~p",
+               [InitEagers, InitLazys]),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
     Res = start_link(Members, InitEagers, InitLazys, Mods),
     PeerService:add_sup_callback(fun ?MODULE:update/1),
@@ -256,57 +258,51 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 %% @private
 -spec handle_cast(term(), state()) -> {noreply, state()}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("broadcast/3 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received {broadcast, ~p, Msg, ~p}",
+                      [MessageId, Mod]),
     State1 = eager_push(MessageId, Message, Mod, State),
     State2 = schedule_lazy_push(MessageId, Mod, State1),
     {noreply, State2};
 handle_cast({broadcast, MessageId, Message, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("broadcast/6 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received {broadcast, ~p, Msg, ~p, ~p, ~p, ~p}",
+                      [MessageId, Mod, Round, Root, From]),
     Valid = Mod:merge(MessageId, Message),
     State1 = handle_broadcast(Valid, MessageId, Message, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({prune, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("prune/2 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{prune, Root, From}]),
+    plumtree_util:log(debug, "moving peer ~p from eager to lazy", [From]),
     State1 = add_lazy(From, Root, State),
     {noreply, State1};
 handle_cast({i_have, MessageId, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("i_have/5 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{i_have, MessageId, Mod, Round, Root, From}]),
     Stale = Mod:is_stale(MessageId),
     State1 = handle_ihave(Stale, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({ignored_i_have, MessageId, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("ignored_i_have/5 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{ignored_i_have, MessageId, Mod, Round, Root, From}]),
     State1 = ack_outstanding(MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("graft/5 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{graft, MessageId, Mod, Round, Root, From}]),
     Result = Mod:graft(MessageId),
+    plumtree_util:log(debug, "graft(~p): ~p", [MessageId, Result]),
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("update/1 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{update, Members}]),
     CurrentMembers = ordsets:from_list(Members),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
+    plumtree_util:log(debug, "    new members: ~p", [ordsets:to_list(New)]),
+    plumtree_util:log(debug, "    removed members: ~p", [ordsets:to_list(Removed)]),
     State1 = case ordsets:size(New) > 0 of
                  false ->
                      State;
                  true ->
                      {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
+                     plumtree_util:log(debug, "    new peers, eager: ~p, lazy: ~p",
+                                       [EagerPeers, LazyPeers]),
                      reset_peers(CurrentMembers, EagerPeers, LazyPeers, State)
              end,
     State2 = neighbors_down(Removed, State1),
@@ -341,10 +337,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 handle_broadcast(false, _MessageId, _Message, Mod, _Round, Root, From, State) -> %% stale msg
+    %% remove sender from eager and set as lazy
+    plumtree_util:log(debug, "moving peer ~p from eager to lazy", [From]),
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, Mod, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
+    %% remove sender from lazy and set as eager
     State1 = add_eager(From, Root, State),
     State2 = eager_push(MessageId, Message, Mod, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
@@ -399,6 +398,7 @@ eager_push(MessageId, Message, Mod, State) ->
 
 eager_push(MessageId, Message, Mod, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
+    plumtree_util:log(debug, "eager push to peers: ~p", [Peers]),
     _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Mod, Peers),
     State.
 
@@ -407,6 +407,8 @@ schedule_lazy_push(MessageId, Mod, State) ->
 
 schedule_lazy_push(MessageId, Mod, Round, Root, From, State) ->
     Peers = lazy_peers(Root, From, State),
+    plumtree_util:log(debug, "scheduling lazy push to peers ~p: ~p",
+               [Peers, {MessageId, Mod, Round, Root, From}]),
     add_all_outstanding(MessageId, Mod, Round, Root, Peers, State).
 
 send_lazy(#state{outstanding=Outstanding}) ->
@@ -417,6 +419,8 @@ send_lazy(Peer, Messages) ->
         {MessageId, Mod, Round, Root} <- ordsets:to_list(Messages)].
 
 send_lazy(MessageId, Mod, Round, Root, Peer) ->
+    plumtree_util:log(debug, "sending lazy push ~p",
+               [{i_have, MessageId, Mod, Round, Root, myself()}]),
     send({i_have, MessageId, Mod, Round, Root, myself()}, Mod, Peer).
 
 maybe_exchange(State) ->
@@ -443,7 +447,7 @@ maybe_exchange(_Peer, State=#state{mods=[]}) ->
 exchange(Peer, State=#state{mods=[Mod | Mods], exchanges=Exchanges}) ->
     State1 = case Mod:exchange(Peer) of
                  {ok, Pid} ->
-                     lager:debug("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
+                     plumtree_util:log(debug, "started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
                      Ref = monitor(process, Pid),
                      State#state{exchanges=[{Mod, Peer, Ref, Pid} | Exchanges]};
                  {error, _Reason} ->

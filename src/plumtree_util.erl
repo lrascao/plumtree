@@ -20,7 +20,8 @@
 
 -module(plumtree_util).
 
--export([build_tree/3]).
+-export([build_tree/3,
+         log/2, log/3]).
 
 %% @doc Convert a list of elements into an N-ary tree. This conversion
 %%      works by treating the list as an array-based tree where, for
@@ -47,6 +48,28 @@ build_tree(N, Nodes, Opts) ->
                             {NewResult, Rest}
                     end, {[], tl(Expand)}, Nodes),
     orddict:from_list(Tree).
+
+-spec log(debug | info | error,
+          String :: string(),
+          Args :: list(term())) -> ok.
+-ifdef(TEST).
+
+log(Level, String) ->
+    log(Level, String, []).
+
+log(debug, String, Args) ->
+    lager:debug(String, Args);
+log(info, String, Args) ->
+    lager:info(String, Args);
+log(error, String, Args) ->
+    lager:error(String, Args).
+
+-else.
+
+log(_Level, _String) -> ok.
+log(_Level, _String, _Args) -> ok.
+
+-endif.
 
 %%
 %% Tests
