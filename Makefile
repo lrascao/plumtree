@@ -8,7 +8,10 @@ all: compile
 
 include tools.mk
 
-test: common_test cover
+test: eunit common_test cover
+
+eunit:
+	$(REBAR) eunit
 
 common_test:
 	$(REBAR) ct
