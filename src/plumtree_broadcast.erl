@@ -119,9 +119,14 @@
 start_link() ->
     PeerService = application:get_env(plumtree, peer_service, partisan_peer_service),
     {ok, Members} = PeerService:members(),
-    {InitEagers, InitLazys} = init_peers(Members),
+    plumtree_util:log(debug, "peer sampling service members: ~p", [Members]),
+    %% the peer service has already sampled the members, we start off
+    %% with pure gossip (ie. all members are in the eager push list and lazy
+    %% list is empty)
+    InitEagers = Members,
+    InitLazys = [],
     plumtree_util:log(debug, "init peers, eager: ~p, lazy: ~p",
-               [InitEagers, InitLazys]),
+                      [InitEagers, InitLazys]),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
     Res = start_link(Members, InitEagers, InitLazys, Mods),
     PeerService:add_sup_callback(fun ?MODULE:update/1),
@@ -289,7 +294,9 @@ handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
     plumtree_util:log(debug, "graft(~p): ~p", [MessageId, Result]),
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
-handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
+handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
+                                            common_eagers=EagerPeers0,
+                                            common_lazys=LazyPeers}) ->
     plumtree_util:log(debug, "received ~p", [{update, Members}]),
     CurrentMembers = ordsets:from_list(Members),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
@@ -300,7 +307,10 @@ handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
                  false ->
                      State;
                  true ->
-                     {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
+                     %% as per the paper (page 9):
+                     %% "When a new member is detected, it is simply added to the set
+                     %%  of eagerPushPeers"
+                     EagerPeers = ordsets:union(EagerPeers0, New),
                      plumtree_util:log(debug, "    new peers, eager: ~p, lazy: ~p",
                                        [EagerPeers, LazyPeers]),
                      reset_peers(CurrentMembers, EagerPeers, LazyPeers, State)
@@ -631,38 +641,6 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
       lazy_sets     = orddict:new(),
       all_members   = ordsets:from_list(AllMembers)
      }.
-
-init_peers(Members) ->
-    case length(Members) of
-        1 ->
-            %% Single member, must be ourselves
-            InitEagers = [],
-            InitLazys  = [];
-        2 ->
-            %% Two members, just eager push to the other
-            InitEagers = Members -- [myself()],
-            InitLazys  = [];
-        N when N < 5 ->
-            %% 2 to 4 members, start with a fully connected tree
-            %% with cycles. it will be adjusted as needed
-            Tree = plumtree_util:build_tree(1, Members, [cycles]),
-            InitEagers = orddict:fetch(myself(), Tree),
-            InitLazys  = [lists:nth(rand_compat:uniform(N - 2), Members -- [myself() | InitEagers])];
-        N when N < 10 ->
-            %% 5 to 9 members, start with gossip tree used by
-            %% riak_core_gossip. it will be adjusted as needed
-            Tree = plumtree_util:build_tree(2, Members, [cycles]),
-            InitEagers = orddict:fetch(myself(), Tree),
-            InitLazys  = [lists:nth(rand_compat:uniform(N - 3), Members -- [myself() | InitEagers])];
-        N ->
-            %% 10 or more members, use a tree similar to riak_core_gossip
-            %% but with higher fanout (larger initial eager set size)
-            NEagers = round(math:log(N) + 1),
-            Tree = plumtree_util:build_tree(NEagers, Members, [cycles]),
-            InitEagers = orddict:fetch(myself(), Tree),
-            InitLazys  = [lists:nth(rand_compat:uniform(N - (NEagers + 1)), Members -- [myself() | InitEagers])]
-    end,
-    {InitEagers, InitLazys}.
 
 %% @private
 myself() ->
