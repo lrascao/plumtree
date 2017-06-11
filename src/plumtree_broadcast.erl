@@ -101,6 +101,7 @@
           %% which members have joined and left during a membership update
           all_members   :: ordsets:ordset(nodename()) | undefined
          }).
+-type state()           :: #state{}.
 
 %%%===================================================================
 %%% API
@@ -118,7 +119,14 @@
 start_link() ->
     PeerService = application:get_env(plumtree, peer_service, partisan_peer_service),
     {ok, Members} = PeerService:members(),
-    {InitEagers, InitLazys} = init_peers(Members),
+    plumtree_util:log(debug, "peer sampling service members: ~p", [Members]),
+    %% the peer service has already sampled the members, we start off
+    %% with pure gossip (ie. all members are in the eager push list and lazy
+    %% list is empty)
+    InitEagers = Members,
+    InitLazys = [],
+    plumtree_util:log(debug, "init peers, eager: ~p, lazy: ~p",
+                      [InitEagers, InitLazys]),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
     Res = start_link(Members, InitEagers, InitLazys, Mods),
     PeerService:add_sup_callback(fun ?MODULE:update/1),
@@ -226,7 +234,7 @@ debug_get_tree(Root, Nodes) ->
 %%%===================================================================
 
 %% @private
--spec init([[any()],...]) -> {ok, #state{}}.
+-spec init([[any()], ...]) -> {ok, state()}.
 init([AllMembers, InitEagers, InitLazys, Mods]) ->
     schedule_lazy_tick(),
     schedule_exchange_tick(),
@@ -239,7 +247,7 @@ init([AllMembers, InitEagers, InitLazys, Mods]) ->
     {ok, State2}.
 
 %% @private
--spec handle_call(term(), {pid(), term()}, #state{}) -> {reply, term(), #state{}}.
+-spec handle_call(term(), {pid(), term()}, state()) -> {reply, term(), state()}.
 handle_call({get_peers, Root}, _From, State) ->
     EagerPeers = all_peers(Root, State#state.eager_sets, State#state.common_eagers),
     LazyPeers = all_peers(Root, State#state.lazy_sets, State#state.common_lazys),
@@ -253,67 +261,66 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
     {reply, Cancelled, State}.
 
 %% @private
--spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
+-spec handle_cast(term(), state()) -> {noreply, state()}.
 handle_cast({broadcast, MessageId, Message, Mod}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("broadcast/3 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received {broadcast, ~p, Msg, ~p}",
+                      [MessageId, Mod]),
     State1 = eager_push(MessageId, Message, Mod, State),
     State2 = schedule_lazy_push(MessageId, Mod, State1),
     {noreply, State2};
 handle_cast({broadcast, MessageId, Message, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("broadcast/6 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received {broadcast, ~p, Msg, ~p, ~p, ~p, ~p}",
+                      [MessageId, Mod, Round, Root, From]),
     Valid = Mod:merge(MessageId, Message),
     State1 = handle_broadcast(Valid, MessageId, Message, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({prune, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("prune/2 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{prune, Root, From}]),
+    plumtree_util:log(debug, "moving peer ~p from eager to lazy", [From]),
     State1 = add_lazy(From, Root, State),
     {noreply, State1};
 handle_cast({i_have, MessageId, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("i_have/5 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{i_have, MessageId, Mod, Round, Root, From}]),
     Stale = Mod:is_stale(MessageId),
     State1 = handle_ihave(Stale, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({ignored_i_have, MessageId, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("ignored_i_have/5 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{ignored_i_have, MessageId, Mod, Round, Root, From}]),
     State1 = ack_outstanding(MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("graft/5 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+    plumtree_util:log(debug, "received ~p", [{graft, MessageId, Mod, Round, Root, From}]),
     Result = Mod:graft(MessageId),
+    plumtree_util:log(debug, "graft(~p): ~p", [MessageId, Result]),
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
-handle_cast({update, Members}, State=#state{all_members=BroadcastMembers}) ->
-    % {message_queue_len, MessageQueueLen} = process_info(self(), message_queue_len),
-    % lager:info("update/1 messaged processed; messages remaining: ~p",
-    %            [MessageQueueLen]),
+handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
+                                            common_eagers=EagerPeers0,
+                                            common_lazys=LazyPeers}) ->
+    plumtree_util:log(debug, "received ~p", [{update, Members}]),
     CurrentMembers = ordsets:from_list(Members),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
+    plumtree_util:log(debug, "    new members: ~p", [ordsets:to_list(New)]),
+    plumtree_util:log(debug, "    removed members: ~p", [ordsets:to_list(Removed)]),
     State1 = case ordsets:size(New) > 0 of
                  false ->
                      State;
                  true ->
-                     {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
+                     %% as per the paper (page 9):
+                     %% "When a new member is detected, it is simply added to the set
+                     %%  of eagerPushPeers"
+                     EagerPeers = ordsets:union(EagerPeers0, New),
+                     plumtree_util:log(debug, "    new peers, eager: ~p, lazy: ~p",
+                                       [EagerPeers, LazyPeers]),
                      reset_peers(CurrentMembers, EagerPeers, LazyPeers, State)
              end,
     State2 = neighbors_down(Removed, State1),
     {noreply, State2}.
 
 %% @private
--spec handle_info('exchange_tick' | 'lazy_tick' | {'DOWN', _, 'process', _, _}, #state{}) ->
-    {noreply, #state{}}.
+-spec handle_info('exchange_tick' | 'lazy_tick' | {'DOWN', _, 'process', _, _}, state()) ->
+    {noreply, state()}.
 handle_info(lazy_tick, State) ->
     schedule_lazy_tick(),
     _ = send_lazy(State),
@@ -327,12 +334,12 @@ handle_info({'DOWN', Ref, process, _Pid, _Reason}, State=#state{exchanges=Exchan
     {noreply, State#state{exchanges=Exchanges1}}.
 
 %% @private
--spec terminate(term(), #state{}) -> term().
+-spec terminate(term(), state()) -> term().
 terminate(_Reason, _State) ->
     ok.
 
 %% @private
--spec code_change(term() | {down, term()}, #state{}, term()) -> {ok, #state{}}.
+-spec code_change(term() | {down, term()}, state(), term()) -> {ok, state()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -340,10 +347,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 handle_broadcast(false, _MessageId, _Message, Mod, _Round, Root, From, State) -> %% stale msg
+    %% remove sender from eager and set as lazy
+    plumtree_util:log(debug, "moving peer ~p from eager to lazy", [From]),
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, Mod, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
+    %% remove sender from lazy and set as eager
     State1 = add_eager(From, Root, State),
     State2 = eager_push(MessageId, Message, Mod, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
@@ -372,8 +382,8 @@ handle_graft({error, Reason}, _MessageId, Mod, _Round, _Root, _From, State) ->
     lager:error("unable to graft message from ~p. reason: ~p", [Mod, Reason]),
     State.
 
-neighbors_down(Removed, State=#state{common_eagers=CommonEagers,eager_sets=EagerSets,
-                                     common_lazys=CommonLazys,lazy_sets=LazySets,
+neighbors_down(Removed, State=#state{common_eagers=CommonEagers, eager_sets=EagerSets,
+                                     common_lazys=CommonLazys, lazy_sets=LazySets,
                                      outstanding=Outstanding}) ->
     NewCommonEagers = ordsets:subtract(CommonEagers, Removed),
     NewCommonLazys  = ordsets:subtract(CommonLazys, Removed),
@@ -398,6 +408,7 @@ eager_push(MessageId, Message, Mod, State) ->
 
 eager_push(MessageId, Message, Mod, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
+    plumtree_util:log(debug, "eager push to peers: ~p", [Peers]),
     _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Mod, Peers),
     State.
 
@@ -406,6 +417,8 @@ schedule_lazy_push(MessageId, Mod, State) ->
 
 schedule_lazy_push(MessageId, Mod, Round, Root, From, State) ->
     Peers = lazy_peers(Root, From, State),
+    plumtree_util:log(debug, "scheduling lazy push to peers ~p: ~p",
+               [Peers, {MessageId, Mod, Round, Root, From}]),
     add_all_outstanding(MessageId, Mod, Round, Root, Peers, State).
 
 send_lazy(#state{outstanding=Outstanding}) ->
@@ -416,6 +429,8 @@ send_lazy(Peer, Messages) ->
         {MessageId, Mod, Round, Root} <- ordsets:to_list(Messages)].
 
 send_lazy(MessageId, Mod, Round, Root, Peer) ->
+    plumtree_util:log(debug, "sending lazy push ~p",
+               [{i_have, MessageId, Mod, Round, Root, myself()}]),
     send({i_have, MessageId, Mod, Round, Root, myself()}, Mod, Peer).
 
 maybe_exchange(State) ->
@@ -425,7 +440,7 @@ maybe_exchange(State) ->
 
 maybe_exchange(undefined, State) ->
     State;
-maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
+maybe_exchange(Peer, State=#state{mods=[Mod | _], exchanges=Exchanges}) ->
     %% limit the number of exchanges this node can start concurrently.
     %% the exchange must (currently?) implement any "inbound" concurrency limits
     ExchangeLimit = app_helper:get_env(plumtree, broadcast_start_exchange_limit, 1),
@@ -439,10 +454,10 @@ maybe_exchange(_Peer, State=#state{mods=[]}) ->
     %% No registered handler.
     State.
 
-exchange(Peer, State=#state{mods=[Mod | Mods],exchanges=Exchanges}) ->
+exchange(Peer, State=#state{mods=[Mod | Mods], exchanges=Exchanges}) ->
     State1 = case Mod:exchange(Peer) of
                  {ok, Pid} ->
-                     lager:debug("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
+                     plumtree_util:log(debug, "started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
                      Ref = monitor(process, Pid),
                      State#state{exchanges=[{Mod, Peer, Ref, Pid} | Exchanges]};
                  {error, _Reason} ->
@@ -569,7 +584,7 @@ update_peers(From, Root, EagerUpdate, LazyUpdate, State) ->
     NewLazys  = LazyUpdate(From, CurrentLazys),
     set_peers(Root, NewEagers, NewLazys, State).
 
-set_peers(Root, Eagers, Lazys, State=#state{eager_sets=EagerSets,lazy_sets=LazySets}) ->
+set_peers(Root, Eagers, Lazys, State=#state{eager_sets=EagerSets, lazy_sets=LazySets}) ->
     NewEagers = orddict:store(Root, Eagers, EagerSets),
     NewLazys = orddict:store(Root, Lazys, LazySets),
     State#state{eager_sets=NewEagers, lazy_sets=NewLazys}.
@@ -626,38 +641,6 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
       lazy_sets     = orddict:new(),
       all_members   = ordsets:from_list(AllMembers)
      }.
-
-init_peers(Members) ->
-    case length(Members) of
-        1 ->
-            %% Single member, must be ourselves
-            InitEagers = [],
-            InitLazys  = [];
-        2 ->
-            %% Two members, just eager push to the other
-            InitEagers = Members -- [myself()],
-            InitLazys  = [];
-        N when N < 5 ->
-            %% 2 to 4 members, start with a fully connected tree
-            %% with cycles. it will be adjusted as needed
-            Tree = plumtree_util:build_tree(1, Members, [cycles]),
-            InitEagers = orddict:fetch(myself(), Tree),
-            InitLazys  = [lists:nth(rand_compat:uniform(N - 2), Members -- [myself() | InitEagers])];
-        N when N < 10 ->
-            %% 5 to 9 members, start with gossip tree used by
-            %% riak_core_gossip. it will be adjusted as needed
-            Tree = plumtree_util:build_tree(2, Members, [cycles]),
-            InitEagers = orddict:fetch(myself(), Tree),
-            InitLazys  = [lists:nth(rand_compat:uniform(N - 3), Members -- [myself() | InitEagers])];
-        N ->
-            %% 10 or more members, use a tree similar to riak_core_gossip
-            %% but with higher fanout (larger initial eager set size)
-            NEagers = round(math:log(N) + 1),
-            Tree = plumtree_util:build_tree(NEagers, Members, [cycles]),
-            InitEagers = orddict:fetch(myself(), Tree),
-            InitLazys  = [lists:nth(rand_compat:uniform(N - (NEagers + 1)), Members -- [myself() | InitEagers])]
-    end,
-    {InitEagers, InitLazys}.
 
 %% @private
 myself() ->

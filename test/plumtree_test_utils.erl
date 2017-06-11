@@ -30,7 +30,8 @@
          wait_until_connected/2,
          start_node/3,
          partition_cluster/2,
-         heal_cluster/2]).
+         heal_cluster/2,
+         select_random/1, select_random/2]).
 
 -include("plumtree.hrl").
 
@@ -150,3 +151,17 @@ heal_cluster(ANodes, BNodes) ->
          [{Node1, Node2} || Node1 <- ANodes, Node2 <- BNodes]),
     ok.
 
+%% @private
+select_random(List) ->
+    select_random(List, []).
+
+select_random(List0, Omit) ->
+    List = List0 -- lists:flatten([Omit]),
+    %% Catch exceptions where there may not be enough members.
+    try
+        Index = rand_compat:uniform(length(List)),
+        lists:nth(Index, List)
+    catch
+        _:_ ->
+            undefined
+    end.

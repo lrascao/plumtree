@@ -2,7 +2,7 @@
              [{description,"Epidemic Broadcast Trees"},
               {vsn,"0.2.1"},
               {registered,[]},
-              {applications,[kernel,stdlib,crypto,lager,rand_compat]},
+              {applications,[kernel,stdlib,crypto,lager,rand_compat,partisan]},
               {mod,{plumtree_app,[]}},
               {modules,[]},
               {env,[{plumtree_data_dir,"data"}]},
