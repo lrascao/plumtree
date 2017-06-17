@@ -406,7 +406,9 @@ start(_Case, Config, Options) ->
 
     StartFun = fun({_Name, Node}) ->
                         %% Start plumtree.
-                        {ok, _} = rpc:call(Node, plumtree, start, [])
+                        {ok, _} = rpc:call(Node, plumtree, start, []),
+                        %% set debug log level for test run
+                        ok = rpc:call(Node, lager, set_loglevel, [{lager_file_backend,"log/console.log"}, debug])
                end,
     lists:foreach(StartFun, Nodes),
 
