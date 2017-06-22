@@ -230,8 +230,42 @@ broadcast_test(Config) ->
                                   plumtree_test_broadcast_handler, put,
                                   [k, rand_compat:uniform()])
                   end, lists:seq(1, BroadcastRounds1)),
-    %% allow 500ms per broadcast to settle
-    timer:sleep(200 * BroadcastRounds1),
+
+    %% send out a control broadcast until it is seen at all nodes
+    BroadcastSettleFun = fun() ->
+                            %% select a random node to send out the control broadcast
+                            Rand0 = rand_compat:uniform(),
+                            {_, RandomNode} = plumtree_test_utils:select_random(Nodes),
+                            ok = rpc:call(RandomNode,
+                                          plumtree_broadcast, broadcast,
+                                          [{k, Rand0}, plumtree_test_broadcast_handler]),
+                            ct:pal("requested node ~p to broadcast {k, ~p}",
+                                   [RandomNode, Rand0]),
+                            %% allow a small time window for propagation
+                            timer:sleep(100),
+                            %% now check that all others have received it
+                            lists:foldl(fun(_, {false, _} = Acc) -> Acc;
+                                            ({_, Node}, _) ->
+                                            case rpc:call(Node, plumtree_test_broadcast_handler,
+                                                          read, [k]) of
+                                                {error, not_found} ->
+                                                    {false, {not_found, Node}};
+                                                {ok, NodeRand} when NodeRand =:= Rand0 -> true;
+                                                {ok, NodeRand} ->
+                                                    {false, {Node, Rand0, NodeRand}}
+                                            end
+                                         end, undefined, Nodes)
+                         end,
+    case wait_until(BroadcastSettleFun, 60 * 10, 100) of
+        ok ->
+            ok;
+        {fail, {false, {not_found, Node}}} ->
+            ct:fail("node ~p never got the gossip",
+                   [Node]);
+        {fail, {false, {Node, Expected0, Contains0}}} ->
+            ct:fail("node ~p had value ~p, expected ~p",
+                    [Node, Contains0, Expected0])
+    end,
 
     %% check membership after broadcast storm
     check_connected_property(Nodes, [{push_list, [eager, lazy]}]),
