@@ -124,12 +124,14 @@ broadcast_data({Key, Object}) ->
 %% If the message has already been received return `false', otherwise return `true'
 -spec merge(any(), any()) -> boolean().
 merge({Key, _Context} = MsgId, RemoteObj) ->
-    lager:info("merge msg id ~p, object: ~p",
-              [MsgId, RemoteObj]),
     Existing = dbread(Key),
+    lager:info("merge msg id ~p, remote object: ~p, existing object: ~p",
+              [MsgId, RemoteObj, Existing]),
     case plumtree_test_object:reconcile(RemoteObj, Existing) of
         false -> false;
         {true, Reconciled} ->
+            lager:info("merge object has ben reconciled to ~p",
+                      [Reconciled]),
             dbwrite(Key, Reconciled),
             true
     end.
@@ -159,7 +161,10 @@ graft({Key, Context}) ->
             LocalContext = plumtree_test_object:context(Object),
             case LocalContext =:= Context of
                 true -> {ok, Object};
-                false -> stale
+                false ->
+                    lager:info("graft({~p, ~p}), context provided does not match local context ~p",
+                               [Key, Context, LocalContext]),
+                    stale
             end
     end.
 

@@ -137,8 +137,6 @@ start_link() ->
     %% list is empty)
     InitEagers = Members,
     InitLazys = [],
-    plumtree_util:log(debug, "init peers, eager: ~p, lazy: ~p",
-                      [InitEagers, InitLazys]),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
     Res = start_link(Members, InitEagers, InitLazys, Mods,
                      [{lazy_tick_period, LazyTickPeriod},
@@ -256,6 +254,8 @@ debug_get_tree(Root, Nodes) ->
 %% @private
 -spec init([[any()], ...]) -> {ok, state()}.
 init([AllMembers, InitEagers, InitLazys, Mods, Opts]) ->
+    plumtree_util:log(debug, "init ~p peers, eager: ~p, lazy: ~p",
+                      [AllMembers, InitEagers, InitLazys]),
     LazyTickPeriod = proplists:get_value(lazy_tick_period, Opts),
     ExchangeTickPeriod = proplists:get_value(exchange_tick_period, Opts),
     schedule_lazy_tick(LazyTickPeriod),
@@ -300,7 +300,8 @@ handle_cast({broadcast, MessageId, Message, Mod, Round, Root, From}, State) ->
     {noreply, State1};
 handle_cast({prune, Root, From}, State) ->
     plumtree_util:log(debug, "received ~p", [{prune, Root, From}]),
-    plumtree_util:log(debug, "moving peer ~p from eager to lazy", [From]),
+    plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p",
+                      [From, Root]),
     State1 = add_lazy(From, Root, State),
     {noreply, State1};
 handle_cast({i_have, MessageId, Mod, Round, Root, From}, State) ->
@@ -374,12 +375,15 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 handle_broadcast(false, _MessageId, _Message, Mod, _Round, Root, From, State) -> %% stale msg
     %% remove sender from eager and set as lazy
-    plumtree_util:log(debug, "moving peer ~p from eager to lazy", [From]),
+    plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p, requesting it to also do the same",
+                      [From, Root]),
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, Mod, From),
     State1;
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
     %% remove sender from lazy and set as eager
+    plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p",
+                      [From, Root]),
     State1 = add_eager(From, Root, State),
     State2 = eager_push(MessageId, Message, Mod, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Mod, Round+1, Root, From, State2).
@@ -390,6 +394,8 @@ handle_ihave(true, MessageId, Mod, Round, Root, From, State) -> %% stale i_have
 handle_ihave(false, MessageId, Mod, Round, Root, From, State) -> %% valid i_have
     %% TODO: don't graft immediately
     _ = send({graft, MessageId, Mod, Round, Root, myself()}, Mod, From),
+    plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p, graft requested from ~p",
+                      [From, Root, From]),
     add_eager(From, Root, State).
 
 handle_graft(stale, MessageId, Mod, Round, Root, From, State) ->
@@ -401,6 +407,8 @@ handle_graft({ok, Message}, MessageId, Mod, Round, Root, From, State) ->
     %% we don't ack outstanding here because the broadcast may fail to be delivered
     %% instead we will allow the i_have to be sent once more and let the subsequent
     %% ignore serve as the ack.
+    plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p",
+                      [From, Root]),
     State1 = add_eager(From, Root, State),
     _ = send({broadcast, MessageId, Message, Mod, Round, Root, myself()}, Mod, From),
     State1;
@@ -451,12 +459,12 @@ send_lazy(#state{outstanding=Outstanding}) ->
     [send_lazy(Peer, Messages) || {Peer, Messages} <- orddict:to_list(Outstanding)].
 
 send_lazy(Peer, Messages) ->
+    plumtree_util:log(debug, "flushing ~p outstanding lazy pushes to peer ~p",
+                      [ordsets:size(Messages), Peer]),
     [send_lazy(MessageId, Mod, Round, Root, Peer) ||
         {MessageId, Mod, Round, Root} <- ordsets:to_list(Messages)].
 
 send_lazy(MessageId, Mod, Round, Root, Peer) ->
-    plumtree_util:log(debug, "sending lazy push ~p",
-               [{i_have, MessageId, Mod, Round, Root, myself()}]),
     send({i_have, MessageId, Mod, Round, Root, myself()}, Mod, Peer).
 
 maybe_exchange(State) ->
