@@ -161,8 +161,8 @@ membership_test(Config) ->
     lists:foreach(fun(_) ->
                     {_, Node} = plumtree_test_utils:select_random(Nodes),
                     ok = rpc:call(Node,
-                                  plumtree_broadcast, broadcast,
-                                  [{k, rand_compat:uniform()}, plumtree_test_broadcast_handler])
+                                  plumtree_test_broadcast_handler, put,
+                                  [k, rand_compat:uniform()])
                   end, lists:seq(1, BroadcastRounds1)),
     %% allow 100ms per broadcast to settle
     timer:sleep(100 * BroadcastRounds1),
@@ -177,8 +177,8 @@ membership_test(Config) ->
     lists:foreach(fun(_) ->
                     {_, Node} = plumtree_test_utils:select_random(Nodes),
                     ok = rpc:call(Node,
-                                  plumtree_broadcast, broadcast,
-                                  [{k, rand_compat:uniform()}, plumtree_test_broadcast_handler])
+                                  plumtree_test_broadcast_handler, put,
+                                  [k, rand_compat:uniform()])
                   end, lists:seq(1, BroadcastRounds2)),
     %% allow 100ms per broadcast to settle
     timer:sleep(100 * BroadcastRounds1),
@@ -225,8 +225,8 @@ broadcast_test(Config) ->
     lists:foreach(fun(_) ->
                     {_, Node} = plumtree_test_utils:select_random(Nodes),
                     ok = rpc:call(Node,
-                                  plumtree_broadcast, broadcast,
-                                  [{k, rand_compat:uniform()}, plumtree_test_broadcast_handler])
+                                  plumtree_test_broadcast_handler, put,
+                                  [k, rand_compat:uniform()])
                   end, lists:seq(1, BroadcastRounds1)),
     %% allow 500ms per broadcast to settle
     timer:sleep(200 * BroadcastRounds1),
@@ -238,13 +238,13 @@ broadcast_test(Config) ->
     Rand = rand_compat:uniform(),
     {_, RandomNode} = plumtree_test_utils:select_random(Nodes),
     ok = rpc:call(RandomNode,
-                  plumtree_broadcast, broadcast,
-                  [{k, Rand}, plumtree_test_broadcast_handler]),  
+                  plumtree_test_broadcast_handler, put,
+                  [k, Rand]),
     ct:pal("requested node ~p to broadcast {k, ~p}",
            [RandomNode, Rand]),
 
     VerifyFun = fun(Node, Rand0) ->
-                    case rpc:call(Node, plumtree_test_broadcast_handler, read, [k]) of
+                    case rpc:call(Node, plumtree_test_broadcast_handler, get, [k]) of
                         {error, not_found} ->
                             {false, not_found};
                         {ok, NodeRand} when NodeRand =:= Rand0 -> true;

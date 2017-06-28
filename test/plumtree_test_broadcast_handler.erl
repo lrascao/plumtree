@@ -30,6 +30,7 @@
          is_stale/1,
          graft/1,
          exchange/1]).
+
 %% gen_server callbacks
 -export([init/1,
          handle_call/3,
@@ -40,10 +41,11 @@
 
 %% API
 -export([start_link/0,
-         read/1]).
+         get/1,
+         put/2]).
 
 -record(state, {}).
--type state()           :: #state{}.
+-type state() :: #state{}.
 
 -spec start_link() -> ok.
 start_link() ->
@@ -51,18 +53,22 @@ start_link() ->
                                     [], []),
     ok.
 
--spec read(Key :: any()) -> {ok, any()} | {error, not_found}.
-read(Key) ->
-    case ets:lookup(?MODULE, Key) of
-        [{Key, Value}] ->
-            % lager:info("read key ~p: ~p",
-            %            [Key, Value]),
-            {ok, Value};
-        _ ->
-            lager:info("unable to find key: ~p",
-                       [Key]),
-            {error, not_found}
+-spec get(Key :: any()) -> {error, not_found} | {ok, any()}.
+get(Key) ->
+    case dbread(Key) of
+        undefined -> {error, not_found};
+        Obj ->
+            {ok, plumtree_test_object:value(Obj)}
     end.
+
+-spec put(Key :: any(),
+          Value :: any()) -> ok.
+put(Key, Value) ->
+    Existing = dbread(Key),
+    UpdatedObj = plumtree_test_object:modify(Existing, Value, this_server_id()),
+    dbwrite(Key, UpdatedObj),
+    plumtree_broadcast:broadcast({Key, UpdatedObj}, plumtree_test_broadcast_handler),
+    ok.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -71,9 +77,6 @@ read(Key) ->
 %% @private
 -spec init([[any()], ...]) -> {ok, state()}.
 init([]) ->
-    msgs_seen = ets:new(msgs_seen, [named_table, set, public,
-                                    {keypos, 1},
-                                    {read_concurrency, true}]),
     ?MODULE = ets:new(?MODULE, [named_table, set, public,
                                 {keypos, 1},
                                 {read_concurrency, true}]),
@@ -111,61 +114,53 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Return a two-tuple of message id and payload from a given broadcast
 -spec broadcast_data(any()) -> {any(), any()}.
-broadcast_data({Key, _Value} = Data) ->
-    MsgId = erlang:phash2(Data),
+broadcast_data({Key, Object}) ->
+    MsgId = {Key, plumtree_test_object:context(Object)},
     lager:info("broadcast_data(~p), msg id: ~p",
-               [Data, MsgId]),
-    true = ets:insert(msgs_seen, {MsgId, Key}),
-    true = ets:insert(?MODULE, Data),
-    {MsgId, Data}.
+               [Object, MsgId]),
+    {MsgId, Object}.
 
 %% Given the message id and payload, merge the message in the local state.
 %% If the message has already been received return `false', otherwise return `true'
 -spec merge(any(), any()) -> boolean().
-merge(MsgId, {Key, _Value} = Payload) ->
-    case ets:lookup(msgs_seen, MsgId) of
-        [{MsgId, _}] ->
-            lager:info("msg with id ~p has already been seen",
-                      [MsgId]),
-            false;
-        _ ->
-            lager:info("merging(~p, ~p) in local state",
-                       [MsgId, Payload]),
-            %% insert the message in the local state
-            true = ets:insert(?MODULE, Payload),
-            %% mark this message as been seen
-            true = ets:insert_new(msgs_seen, {MsgId, Key}),
+merge({Key, _Context} = MsgId, RemoteObj) ->
+    lager:info("merge msg id ~p, object: ~p",
+              [MsgId, RemoteObj]),
+    Existing = dbread(Key),
+    case plumtree_test_object:reconcile(RemoteObj, Existing) of
+        false -> false;
+        {true, Reconciled} ->
+            dbwrite(Key, Reconciled),
             true
     end.
 
 %% Return true if the message (given the message id) has already been received.
 %% `false' otherwise
 -spec is_stale(any()) -> boolean().
-is_stale(MsgId) ->
-    case ets:lookup(msgs_seen, MsgId) of
-        [{MsgId, _}] ->
-            lager:info("is_stale(~p): ~p",
-                       [MsgId, true]),
-            true;
-        _ ->
-            lager:info("is_stale(~p): ~p",
-                       [MsgId, false]),
-            false
+is_stale({Key, Context}) ->
+    case dbread(Key) of
+        undefined -> false;
+        Existing ->
+            plumtree_test_object:is_stale(Context, Existing)
     end.
 
 %% Return the message associated with the given message id. In some cases a message
 %% has already been sent with information that subsumes the message associated with the given
 %% message id. In this case, `stale' is returned.
 -spec graft(any()) -> stale | {ok, any()} | {error, any()}.
-graft(MsgId) ->
-    % lager:info("graft(~p)",
-    %            [MsgId]),
-    case ets:lookup(msgs_seen, MsgId) of
-        [{MsgId, Key}] ->
-            [{Key,Msg}] = ets:lookup(?MODULE, Key),
-            {ok, {Key, Msg}};
-        _ ->
-            {error, not_found}
+graft({Key, Context}) ->
+    case dbread(Key) of
+        undefined ->
+            %% this *really* should not happen
+            lager:alert("unable to graft key ~p, could not find it",
+                        [Key]),
+            {error, not_found};
+        Object ->
+            LocalContext = plumtree_test_object:context(Object),
+            case LocalContext =:= Context of
+                true -> {ok, Object};
+                false -> stale
+            end
     end.
 
 %% Trigger an exchange between the local handler and the handler on the given node.
@@ -176,3 +171,24 @@ graft(MsgId) ->
 -spec exchange(node()) -> {ok, pid()} | {error, term()}.
 exchange(_Node) ->
     {ok, self()}.
+
+%% @private
+-spec dbread(Key :: any()) -> any() | undefined.
+dbread(Key) ->
+    case ets:lookup(?MODULE, Key) of
+        [{Key, Object}] ->
+            Object;
+        _ ->
+            undefined
+    end.
+
+%% @private
+-spec dbwrite(Key :: any(),
+              Value :: any()) -> any().
+dbwrite(Key, Object) ->
+    ets:insert(?MODULE, {Key, Object}),
+    Object.
+
+%% @private
+this_server_id() -> node().
+
