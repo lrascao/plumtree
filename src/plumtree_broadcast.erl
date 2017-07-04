@@ -653,7 +653,7 @@ send(Msg, Mod, P) ->
                                       partisan_peer_service),
     PeerServiceManager = PeerService:manager(),
     instrument_transmission(Msg, Mod),
-    PeerServiceManager:forward_message(P, ?SERVER, Msg).
+    ok = PeerServiceManager:forward_message(P, ?SERVER, Msg).
     %% TODO: add debug logging
     %% gen_server:cast({?SERVER, P}, Msg).
 
