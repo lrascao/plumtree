@@ -380,6 +380,16 @@ handle_broadcast(false, _MessageId, _Message, Mod, _Round, Root, From, State) ->
     State1 = add_lazy(From, Root, State),
     _ = send({prune, Root, myself()}, Mod, From),
     State1;
+%% The next clause is designed to allow the callback to override the message id
+%% after the merge, suppose node A eager pushed a change to node B, node B would then lazy
+%% push it to node C, at this point the message id being sent to C is the one that originated
+%% from A. Concurrently B takes an update that subsumes the previous one, now node C receives the
+%% lazy push and hasn't seen this message and asks B to graft it, if C now sends the message id
+%% that it got from A, node B will not answer the graft since it is deemed stale.
+%% With this extra clause the callback is able to return a new message id that resulted from
+%% the merge and have that be propagated.
+handle_broadcast({true, MessageId}, _OldMessageId, Message, Mod, Round, Root, From, State) ->
+    handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State);
 handle_broadcast(true, MessageId, Message, Mod, Round, Root, From, State) -> %% valid msg
     %% remove sender from lazy and set as eager
     plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p",

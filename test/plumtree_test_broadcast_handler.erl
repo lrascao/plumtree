@@ -122,7 +122,7 @@ broadcast_data({Key, Object}) ->
 
 %% Given the message id and payload, merge the message in the local state.
 %% If the message has already been received return `false', otherwise return `true'
--spec merge(any(), any()) -> boolean().
+-spec merge(any(), any()) -> boolean() | {true, any()}.
 merge({Key, _Context} = MsgId, RemoteObj) ->
     Existing = dbread(Key),
     lager:info("merge msg id ~p, remote object: ~p, existing object: ~p",
@@ -133,7 +133,7 @@ merge({Key, _Context} = MsgId, RemoteObj) ->
             lager:info("merge object has ben reconciled to ~p",
                       [Reconciled]),
             dbwrite(Key, Reconciled),
-            true
+            {true, {Key, plumtree_test_object:context(Reconciled)}}
     end.
 
 %% Return true if the message (given the message id) has already been received.
