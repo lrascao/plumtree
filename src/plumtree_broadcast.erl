@@ -347,13 +347,13 @@ handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
     {noreply, state()}.
 handle_info(lazy_tick,
             #state{lazy_tick_period = Period} = State) ->
-    schedule_lazy_tick(Period),
     _ = send_lazy(State),
+    schedule_lazy_tick(Period),
     {noreply, State};
 handle_info(exchange_tick,
             #state{exchange_tick_period = Period} = State) ->
-    schedule_exchange_tick(Period),
     State1 = maybe_exchange(State),
+    schedule_exchange_tick(Period),
     {noreply, State1};
 handle_info({'DOWN', Ref, process, _Pid, _Reason}, State=#state{exchanges=Exchanges}) ->
     Exchanges1 = lists:keydelete(Ref, 3, Exchanges),
