@@ -23,7 +23,7 @@
 
 %% API
 -export([start_link/0,
-         start_link/4,
+         start_link/5,
          broadcast/2,
          update/1,
          broadcast_members/0,
@@ -99,7 +99,15 @@
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
-          all_members   :: ordsets:ordset(nodename()) | undefined
+          all_members   :: ordsets:ordset(nodename()) | undefined,
+
+          %% Lazy tick period in milliseconds. On every tick all outstanding
+          %% lazy pushes are sent out
+          lazy_tick_period :: non_neg_integer(),
+
+          %% Exchange tick period in milliseconds that may or may not occur
+          exchange_tick_period :: non_neg_integer()
+
          }).
 -type state()           :: #state{}.
 
@@ -117,6 +125,10 @@
 %% to generate membership updates as the ring changes.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
+    LazyTickPeriod = application:get_env(plumtree, lazy_tick_period,
+                                         ?DEFAULT_LAZY_TICK_PERIOD),
+    ExchangeTickPeriod = application:get_env(plumtree, exchange_tick_period,
+                                             ?DEFAULT_EXCHANGE_TICK_PERIOD),
     PeerService = application:get_env(plumtree, peer_service, partisan_peer_service),
     {ok, Members} = PeerService:members(),
     plumtree_util:log(debug, "peer sampling service members: ~p", [Members]),
@@ -128,7 +140,9 @@ start_link() ->
     plumtree_util:log(debug, "init peers, eager: ~p, lazy: ~p",
                       [InitEagers, InitLazys]),
     Mods = app_helper:get_env(plumtree, broadcast_mods, []),
-    Res = start_link(Members, InitEagers, InitLazys, Mods),
+    Res = start_link(Members, InitEagers, InitLazys, Mods,
+                     [{lazy_tick_period, LazyTickPeriod},
+                      {exchange_tick_period, ExchangeTickPeriod}]),
     PeerService:add_sup_callback(fun ?MODULE:update/1),
     Res.
 
@@ -141,14 +155,20 @@ start_link() ->
 %% `InitEagers' and `InitLazys' must also be subsets of `InitMembers'. `Mods' is
 %% a list of modules that may be handlers for broadcasted messages. All modules in
 %% `Mods' should implement the `plumtree_broadcast_handler' behaviour.
+%% `Opts' is a proplist with the following possible options:
+%%      Flush all outstanding lazy pushes period (in milliseconds)
+%%          {`lazy_tick_period', non_neg_integer()}
+%%      Possibly perform an exchange period (in milliseconds)
+%%          {`exchange_tick_period', non_neg_integer()}
 %%
 %% NOTE: When starting the server using start_link/2 no automatic membership update from
 %% ring_events is registered. Use start_link/0.
--spec start_link([nodename()], [nodename()], [nodename()], [module()]) ->
+-spec start_link([nodename()], [nodename()], [nodename()], [module()],
+                 proplists:proplist()) ->
     {ok, pid()} | ignore | {error, term()}.
-start_link(InitMembers, InitEagers, InitLazys, Mods) ->
+start_link(InitMembers, InitEagers, InitLazys, Mods, Opts) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE,
-                          [InitMembers, InitEagers, InitLazys, Mods], []).
+                          [InitMembers, InitEagers, InitLazys, Mods, Opts], []).
 
 %% @doc Broadcasts a message originating from this node. The message will be delivered to
 %% each node at least once. The `Mod' passed is responsible for handling the message on remote
@@ -235,13 +255,17 @@ debug_get_tree(Root, Nodes) ->
 
 %% @private
 -spec init([[any()], ...]) -> {ok, state()}.
-init([AllMembers, InitEagers, InitLazys, Mods]) ->
-    schedule_lazy_tick(),
-    schedule_exchange_tick(),
+init([AllMembers, InitEagers, InitLazys, Mods, Opts]) ->
+    LazyTickPeriod = proplists:get_value(lazy_tick_period, Opts),
+    ExchangeTickPeriod = proplists:get_value(exchange_tick_period, Opts),
+    schedule_lazy_tick(LazyTickPeriod),
+    schedule_exchange_tick(ExchangeTickPeriod),
     State1 =  #state{
                  outstanding = orddict:new(),
                  mods = lists:usort(Mods),
-                 exchanges=[]
+                 exchanges=[],
+                 lazy_tick_period = LazyTickPeriod,
+                 exchange_tick_period = ExchangeTickPeriod
                 },
     State2 = reset_peers(AllMembers, InitEagers, InitLazys, State1),
     {ok, State2}.
@@ -321,12 +345,14 @@ handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
 %% @private
 -spec handle_info('exchange_tick' | 'lazy_tick' | {'DOWN', _, 'process', _, _}, state()) ->
     {noreply, state()}.
-handle_info(lazy_tick, State) ->
-    schedule_lazy_tick(),
+handle_info(lazy_tick,
+            #state{lazy_tick_period = Period} = State) ->
+    schedule_lazy_tick(Period),
     _ = send_lazy(State),
     {noreply, State};
-handle_info(exchange_tick, State) ->
-    schedule_exchange_tick(),
+handle_info(exchange_tick,
+            #state{exchange_tick_period = Period} = State) ->
+    schedule_exchange_tick(Period),
     State1 = maybe_exchange(State),
     {noreply, State1};
 handle_info({'DOWN', Ref, process, _Pid, _Reason}, State=#state{exchanges=Exchanges}) ->
@@ -623,11 +649,11 @@ send(Msg, Mod, P) ->
     %% TODO: add debug logging
     %% gen_server:cast({?SERVER, P}, Msg).
 
-schedule_lazy_tick() ->
-    schedule_tick(lazy_tick, broadcast_lazy_timer, 1000).
+schedule_lazy_tick(Period) ->
+    schedule_tick(lazy_tick, broadcast_lazy_timer, Period).
 
-schedule_exchange_tick() ->
-    schedule_tick(exchange_tick, broadcast_exchange_timer, 10000).
+schedule_exchange_tick(Period) ->
+    schedule_tick(exchange_tick, broadcast_exchange_timer, Period).
 
 schedule_tick(Message, Timer, Default) ->
     TickMs = app_helper:get_env(plumtree, Timer, Default),
