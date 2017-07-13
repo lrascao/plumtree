@@ -652,6 +652,11 @@ all_peers(Root, Sets, Default) ->
         {ok, Peers} -> Peers
     end.
 
+%% allow either sending several messages to a peer,
+%% the same message to several peers or one message
+%% to a single peer
+send(Msgs, Peer) when is_list(Msgs) ->
+    [send(Msg, Peer) || Msg <- Msgs];
 send(Msg, Peers) when is_list(Peers) ->
     [send(Msg, P) || P <- Peers];
 send(Msg, P) ->
