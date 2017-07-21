@@ -541,7 +541,12 @@ eager_push(MessageId, Message, State) ->
 
 eager_push(MessageId, Message, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
-    plumtree_util:log(debug, "eager push to peers: ~p", [Peers]),
+    eager_push(Peers, MessageId, Message, Round, Root, From, State).
+
+eager_push([], _MessageId, _Message, _Round, _Root, _From, State) -> State;
+eager_push(Peers, MessageId, Message, Round, Root, From, State) ->
+    plumtree_util:log(debug, "eager push to peers ~p for tree rooted on ~p originating from ~p",
+                      [Peers, Root, From]),
     _ = send({broadcast, myself(), [{MessageId, Message, Round, Root}]}, Peers),
     State.
 
