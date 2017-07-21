@@ -410,13 +410,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-handle_broadcast(false, _MessageId, _Message, _Round, Root, From, State) -> %% stale msg
+handle_broadcast(false, _MessageId, _Message, _Round, Root, From, State0) -> %% stale msg
     %% remove sender from eager and set as lazy
-    plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p, requesting it to also do the same",
-                      [From, Root]),
-    State1 = add_lazy(From, Root, State),
-    _ = send({prune, Root, myself()}, From),
-    State1;
+    case add_lazy(From, Root, State0) of
+        already_added -> State0;
+        State ->
+            plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p, requesting it to also do the same",
+                              [From, Root]),
+            _ = send({prune, Root, myself()}, From),
+            State
+    end;
 %% The next clause is designed to allow the callback to override the message id
 %% after the merge, suppose node A eager pushed a change to node B, node B would then lazy
 %% push it to node C, at this point the message id being sent to C is the one that originated
