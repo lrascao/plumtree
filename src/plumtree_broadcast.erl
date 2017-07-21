@@ -298,14 +298,19 @@ handle_cast({broadcast, Messages}, State0) ->
                             schedule_lazy_push(MessageId, State)
                         end, State0, Messages),
     {noreply, State};
-handle_cast({broadcast, From, Messages},
+handle_cast({broadcast, From, Messages, Opts},
             #state{mod = Mod} = State0) ->
     State = lists:foldl(fun({MessageId, Message, Round, Root}, StateAcc) ->
-                            plumtree_util:log(debug, "received {broadcast, Msg, ~p, ~p, ~p} from ~p",
+                            plumtree_util:log(debug, "received {broadcast, ~p, Msg, ~p, ~p} from ~p",
                                               [MessageId, Round, Root, From]),
                             Valid = Mod:merge(MessageId, Message),
-                            handle_broadcast(Valid, MessageId, Message, Round,
-                                             Root, From, StateAcc)
+                            %% graft broadcasts are simply merged and not pushed to peers
+                            case lists:member(graft, Opts) of
+                                true -> StateAcc;
+                                false ->
+                                    handle_broadcast(Valid, MessageId, Message, Round,
+                                                     Root, From, StateAcc)
+                            end
                         end, State0, Messages),
 
     {noreply, State};
@@ -354,7 +359,11 @@ handle_cast({graft, From, Messages}, State) ->
     plumtree_util:log(debug, "received ~p graft messages from ~p",
                       [length(Messages), From]),
     {BroadcastMsgs, State1} = handle_grafts(From, Messages, State),
-    _ = send({broadcast, myself(), BroadcastMsgs}, From),
+    %% by handling the graft requests we want to generate gossip messages back
+    %% to the requester, but these differ from regular broadcasts in that these
+    %% don't need to be propagated through the overlay as the other ones, mark them
+    %% accordingly so we're able to distinguish them.
+    _ = send({broadcast, myself(), BroadcastMsgs, [graft]}, From),
     {noreply, State1};
 handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
                                             common_eagers=EagerPeers0,
@@ -542,7 +551,7 @@ eager_push(MessageId, Message, State) ->
 eager_push(MessageId, Message, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
     plumtree_util:log(debug, "eager push to peers: ~p", [Peers]),
-    _ = send({broadcast, myself(), [{MessageId, Message, Round, Root}]}, Peers),
+    _ = send({broadcast, myself(), [{MessageId, Message, Round, Root}], []}, Peers),
     State.
 
 schedule_lazy_push(MessageId, State) ->
