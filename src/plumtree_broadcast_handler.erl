@@ -24,7 +24,8 @@
 
 %% Given the message id and payload, merge the message in the local state.
 %% If the message has already been received return `false', otherwise return `true'
--callback merge(any(), any()) -> boolean().
+%% If a new message id is to be propagated after the merge return `{true, MessageId}`
+-callback merge(any(), any()) -> boolean() | {true, any()}.
 
 %% Return true if the message (given the message id) has already been received.
 %% `false' otherwise
