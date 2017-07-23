@@ -394,7 +394,7 @@ start(_Case, Config, Options) ->
             end,
 
             %% configure plumtree
-            ok = rpc:call(Node, application, set_env, [plumtree, broadcast_mods, [plumtree_test_broadcast_handler]]),
+            ok = rpc:call(Node, application, set_env, [plumtree, broadcast_mod, plumtree_test_broadcast_handler]),
             %% reduce the broacast exchange period down to 1 second
             ok = rpc:call(Node, application, set_env, [plumtree, broadcast_exchange_timer, 1000]),
             %% initialize the test broadcast handler
