@@ -486,13 +486,13 @@ handle_graft(stale, MessageId, Round, Root, From, State) ->
     %% according to Mod. We ack the outstanding message since the outstanding entry
     %% for the newer message exists
     {stale, ack_outstanding(MessageId, Round, Root, From, State)};
-handle_graft({ok, Message}, MessageId, Round, Root, From, State) ->
-    %% we don't ack outstanding here because the broadcast may fail to be delivered
-    %% instead we will allow the i_have to be sent once more and let the subsequent
-    %% ignore serve as the ack.
+handle_graft({ok, Message}, MessageId, Round, Root, From, State0) ->
     plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p",
                       [From, Root]),
-    {broadcast, {MessageId, Message, Round, Root}, add_eager(From, Root, State)};
+    %% ack outstanding lazy push since it originated a graft from the peer
+    State = ack_outstanding(MessageId, Round, Root, From,
+                            add_eager(From, Root, State0)),
+    {broadcast, {MessageId, Message, Round, Root}, State};
 handle_graft({error, Reason}, _MessageId, _Round, _Root, From, State) ->
     lager:error("unable to graft message from ~p. reason: ~p", [From, Reason]),
     {error, State}.
