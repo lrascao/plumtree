@@ -95,25 +95,25 @@ broadcast_high_client_test(Config) ->
     broadcast_test([{n_clients, 11}] ++ Config).
 
 broadcast_high_active_test(Config) ->
+    broadcast_test([{max_active_size, 9},
+                    {min_active_size, 9}] ++ Config).
+
+broadcast_low_active_test(Config) ->
     broadcast_test([{max_active_size, 6},
                     {min_active_size, 6}] ++ Config).
 
-broadcast_low_active_test(Config) ->
-    broadcast_test([{max_active_size, 3},
-                    {min_active_size, 3}] ++ Config).
-
 broadcast_high_client_high_active_test(Config) ->
+    broadcast_test([{max_active_size, 9},
+                    {min_active_size, 9},
+                    {n_clients, 11}] ++ Config).
+
+broadcast_high_client_low_active_test(Config) ->
     broadcast_test([{max_active_size, 6},
                     {min_active_size, 6},
                     {n_clients, 11}] ++ Config).
 
-broadcast_high_client_low_active_test(Config) ->
-    broadcast_test([{max_active_size, 2},
-                    {min_active_size, 1},
-                    {n_clients, 11}] ++ Config).
-
 broadcast_partition_test(Config) ->
-    broadcast_test([{max_active_size, 5},
+    broadcast_test([{max_active_size, 6},
                     {n_clients, 11},
                     {partition, true}] ++ Config).
 
@@ -152,7 +152,7 @@ membership_test(Config) ->
     timer:sleep(1000 * (NServers + NClients)),
 
     %% check membership after cluster
-    check_membership(Nodes),
+    check_connected_property(Nodes),
 
     BroadcastRounds1 = rand_compat:uniform(100),
     ct:pal("now doing ~p rounds of broadcast",
@@ -168,7 +168,7 @@ membership_test(Config) ->
     timer:sleep(100 * BroadcastRounds1),
 
     %% check membership after broadcast
-    check_membership(Nodes),
+    check_connected_property(Nodes, [{push_list, [eager, lazy]}]),
     
     %% now inject partitions in the broadcast tree until the graph is no longer connected
     
@@ -215,13 +215,15 @@ broadcast_test(Config) ->
     timer:sleep(1000 * (NServers + NClients)),
 
     %% check membership after cluster
-    check_membership(Nodes),
+    check_connected_property(Nodes),
 
     {ok, Reference} = maybe_partition(Partition, Manager, Nodes),
     maybe_resolve_partition(Partition, Reference, Manager, Nodes),
 
     %% do several rounds of broadcast from random nodes, then wait a bit for propagation
     BroadcastRounds1 = rand_compat:uniform(100),
+    ct:pal("now doing ~p rounds of broadcast",
+           [BroadcastRounds1]),
     lists:foreach(fun(_) ->
                     {_, Node} = plumtree_test_utils:select_random(Nodes),
                     ok = rpc:call(Node,
@@ -232,7 +234,7 @@ broadcast_test(Config) ->
     timer:sleep(200 * BroadcastRounds1),
 
     %% check membership after broadcast storm
-    check_membership(Nodes),
+    check_connected_property(Nodes, [{push_list, [eager, lazy]}]),
 
     %% do a final round of broadcast, also from a random node, which is the one we'll be checking
     Rand = rand_compat:uniform(),
@@ -415,6 +417,15 @@ start(_Case, Config, Options) ->
     ct:pal("Clustering nodes."),
     lists:foreach(fun(Node) -> cluster(Node, Nodes, Options) end, Nodes),
 
+    lists:foreach(fun({_, Node}) ->
+                      {ok, Members} = rpc:call(Node,
+                                               partisan_peer_service,
+                                               members,
+                                               []),
+                      ct:pal("node ~p active view: ~p",
+                             [Node, Members])
+                  end, Nodes),
+
     ct:pal("Partisan fully initialized."),
 
     Nodes.
@@ -559,44 +570,59 @@ connect(G, N1, N2) ->
     ok.
 
 %% @private
-check_membership(Nodes) ->
-    check_membership(Nodes, [{fail, true}]).
+check_connected_property(Nodes) ->
+    check_connected_property(Nodes,
+                             [{fail, true}, {push_list, [eager]}]).
                      
 %% @private
-check_membership(Nodes, Opts) ->
-    %% Verify connectedness.
-    %%
-    Graph = digraph:new(),
-    %% Build the graph.
-    lists:foreach(fun({_, Node}) ->
-                    {Eagers, Lazys} = rpc:call(Node, plumtree_broadcast, debug_get_peers,
-                                              [Node, Node]),
-                    ct:pal("node ~p peers, eager: ~p, lazy: ~p",
-                           [Node, Eagers, Lazys]),
-                    %% Add vertexes and edges.
-                    [connect(Graph, Node, N) || N <- Eagers],
-                    [connect(Graph, Node, N) || N <- Lazys]
-                  end, Nodes),
+check_connected_property(Nodes, Opts) ->
+    PushList = proplists:get_value(push_list, Opts),
+    %% Build the graphs.
+    RootGraphs =
+        lists:map(fun({_, Root}) ->
+            %% build a graph for each node root
+            Graph = digraph:new(),
+            lists:foreach(fun({_, Node}) ->
+                {Eagers, Lazys} = rpc:call(Node, plumtree_broadcast, debug_get_peers,
+                                          [Node, Root]),
+                ct:pal("node ~p peers rooted at ~p, eager: ~p, lazy: ~p",
+                       [Node, Root, Eagers, Lazys]),
+                %% Add vertexes and edges, for both eager and lazy lists
+                case lists:member(eager, PushList) of
+                    true ->
+                        [connect(Graph, Node, N) || N <- Eagers];
+                    false -> ok
+                end,
+                case lists:member(lazy, PushList) of
+                    true ->
+                        [connect(Graph, Node, N) || N <- Lazys];
+                    false -> ok
+                end
+            end, Nodes),
+            {Root, Graph}
+        end, Nodes),
     %% Verify connectedness.
     Results =
-        lists:map(fun({_, Node} = Myself) ->
+        lists:map(fun({Root, Graph}) ->
                         lists:foreach(fun({_, N}) ->
-                            Path = digraph:get_short_path(Graph, Node, N),
+                            Path = digraph:get_short_path(Graph, Root, N),
                             case Path of
                                 false ->
                                     case proplists:get_value(fail, Opts) of
                                         true ->
                                             ct:fail("Graph is not connected, unable to find route between ~p and ~p",
-                                                   [Node, N]),
+                                                   [Root, N]),
                                             ok;
                                         false ->
                                             error
                                     end;
                                 _ ->
+                                    ct:pal("path found between ~p and ~p: ~p",
+                                           [Root, N, Path]),
                                     ok
                             end
-                        end, Nodes -- [Myself])
-                  end, Nodes),
+                        end, Nodes)
+                  end, RootGraphs),
     not lists:member(error, Results).
 
 %% @private
