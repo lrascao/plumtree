@@ -309,11 +309,15 @@ handle_cast({broadcast, From, Messages},
                         end, State0, Messages),
 
     {noreply, State};
-handle_cast({prune, Root, From}, State) ->
-    plumtree_util:log(debug, "received ~p", [{prune, Root, From}]),
-    plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p",
-                      [From, Root]),
-    State1 = add_lazy(From, Root, State),
+handle_cast({prune, Root, From}, State0) ->
+    plumtree_util:log(debug, "received ~p from ~p", [{prune, Root}, From]),
+    State1 = case add_lazy(From, Root, State0) of
+                 already_added -> State0;
+                 State ->
+                    plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p",
+                                      [From, Root]),
+                    State
+             end,
     {noreply, State1};
 handle_cast({i_have, From, Messages}, State0) ->
     plumtree_util:log(debug, "received ~p i_have messages from ~p",
@@ -406,13 +410,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-handle_broadcast(false, _MessageId, _Message, _Round, Root, From, State) -> %% stale msg
+handle_broadcast(false, _MessageId, _Message, _Round, Root, From, State0) -> %% stale msg
     %% remove sender from eager and set as lazy
-    plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p, requesting it to also do the same",
-                      [From, Root]),
-    State1 = add_lazy(From, Root, State),
-    _ = send({prune, Root, myself()}, From),
-    State1;
+    case add_lazy(From, Root, State0) of
+        already_added -> State0;
+        State ->
+            plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p, requesting it to also do the same",
+                              [From, Root]),
+            _ = send({prune, Root, myself()}, From),
+            State
+    end;
 %% The next clause is designed to allow the callback to override the message id
 %% after the merge, suppose node A eager pushed a change to node B, node B would then lazy
 %% push it to node C, at this point the message id being sent to C is the one that originated
@@ -423,11 +430,15 @@ handle_broadcast(false, _MessageId, _Message, _Round, Root, From, State) -> %% s
 %% the merge and have that be propagated.
 handle_broadcast({true, MessageId}, _OldMessageId, Message, Round, Root, From, State) ->
     handle_broadcast(true, MessageId, Message, Round, Root, From, State);
-handle_broadcast(true, MessageId, Message, Round, Root, From, State) -> %% valid msg
+handle_broadcast(true, MessageId, Message, Round, Root, From, State0) -> %% valid msg
     %% remove sender from lazy and set as eager
-    plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p",
-                      [From, Root]),
-    State1 = add_eager(From, Root, State),
+    State1 = case add_eager(From, Root, State0) of
+                 already_added -> State0;
+                 State ->
+                    plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p",
+                                      [From, Root]),
+                    State
+             end,
     State2 = eager_push(MessageId, Message, Round+1, Root, From, State1),
     schedule_lazy_push(MessageId, Round+1, Root, From, State2).
 
@@ -456,11 +467,18 @@ handle_ihave({MessageId, Round, Root}, From,
 
 handle_ihave(true, _MessageId, _Round, _Root, _From, State) -> %% stale i_have
     {ignored, State};
-handle_ihave(false, _MessageId, _Round, Root, From, State) -> %% valid i_have
+handle_ihave(false, _MessageId, _Round, Root, From, State0) -> %% valid i_have
     %% TODO: don't graft immediately
-    plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p, graft requested from ~p",
-                      [From, Root, From]),
-    {graft, add_eager(From, Root, State)}.
+    case add_eager(From, Root, State0) of
+        already_added ->
+            plumtree_util:log(debug, "graft requested from ~p",
+                              [From]),
+            {graft, State0};
+        State ->
+            plumtree_util:log(debug, "moving peer ~p from lazy to eager on tree rooted at ~p, graft requested from ~p",
+                              [From, Root, From]),
+            {graft, State}
+    end.
 
 handle_grafts(From, Messages, State) ->
     lists:foldl(fun(GraftMessage, {BroadcastMsgs0, StateAcc}) ->
@@ -491,7 +509,7 @@ handle_graft({ok, Message}, MessageId, Round, Root, From, State0) ->
                       [From, Root]),
     %% ack outstanding lazy push since it originated a graft from the peer
     State = ack_outstanding(MessageId, Round, Root, From,
-                            add_eager(From, Root, State0)),
+                            maybe_add_eager(From, Root, State0)),
     {broadcast, {MessageId, Message, Round, Root}, State};
 handle_graft({error, Reason}, _MessageId, _Round, _Root, From, State) ->
     lager:error("unable to graft message from ~p. reason: ~p", [From, Reason]),
@@ -674,16 +692,39 @@ existing_outstanding(Peer, All) ->
     end.
 
 add_eager(From, Root, State) ->
-    update_peers(From, Root, fun ordsets:add_element/2, fun ordsets:del_element/2, State).
+    CurrentEagers = all_eager_peers(Root, State),
+    maybe_update_peers({eager, CurrentEagers}, From, Root,
+                       fun ordsets:add_element/2, fun ordsets:del_element/2, State).
+
+maybe_add_eager(From, Root, State0) ->
+    case add_eager(From, Root, State0) of
+        already_added -> State0;
+        NewState -> NewState
+    end.
 
 add_lazy(From, Root, State) ->
-    update_peers(From, Root, fun ordsets:del_element/2, fun ordsets:add_element/2, State).
-
-update_peers(From, Root, EagerUpdate, LazyUpdate, State) ->
-    CurrentEagers = all_eager_peers(Root, State),
     CurrentLazys = all_lazy_peers(Root, State),
-    NewEagers = EagerUpdate(From, CurrentEagers),
-    NewLazys  = LazyUpdate(From, CurrentLazys),
+    maybe_update_peers({lazy, CurrentLazys}, From, Root,
+                       fun ordsets:del_element/2, fun ordsets:add_element/2, State).
+
+maybe_update_peers({_Type, Set} = TypeSet, From, Root,
+                   EagerUpdate, LazyUpdate, State) ->
+    case ordsets:is_element(From, Set) of
+        true -> already_added;
+        false ->
+            OtherTypeSet = other_type_set(TypeSet, Root, State),
+            update_peers(From, Root, [TypeSet, OtherTypeSet],
+                         EagerUpdate, LazyUpdate, State)
+    end.
+
+other_type_set({eager, _}, Root, State) -> {lazy, all_lazy_peers(Root, State)};
+other_type_set({lazy, _}, Root, State) -> {eager, all_eager_peers(Root, State)}.
+
+update_peers(From, Root, PeerLists, EagerUpdate, LazyUpdate, State) ->
+    {eager, Eagers} = lists:keyfind(eager, 1, PeerLists),
+    {lazy, Lazys} = lists:keyfind(lazy, 1, PeerLists),
+    NewEagers = EagerUpdate(From, Eagers),
+    NewLazys  = LazyUpdate(From, Lazys),
     set_peers(Root, NewEagers, NewLazys, State).
 
 set_peers(Root, Eagers, Lazys, State=#state{eager_sets=EagerSets, lazy_sets=LazySets}) ->
