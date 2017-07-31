@@ -64,11 +64,7 @@ get(Key) ->
 -spec put(Key :: any(),
           Value :: any()) -> ok.
 put(Key, Value) ->
-    Existing = dbread(Key),
-    UpdatedObj = plumtree_test_object:modify(Existing, Value, this_server_id()),
-    dbwrite(Key, UpdatedObj),
-    plumtree_broadcast:broadcast({Key, UpdatedObj}, plumtree_test_broadcast_handler),
-    ok.
+    gen_server:call(?SERVER, {put, Key, Value}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -84,6 +80,12 @@ init([]) ->
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, state()) -> {reply, term(), state()}.
+handle_call({put, Key, Value}, _From, State) ->
+    Existing = dbread(Key),
+    UpdatedObj = plumtree_test_object:modify(Existing, Value, this_server_id()),
+    dbwrite(Key, UpdatedObj),
+    plumtree_broadcast:broadcast({Key, UpdatedObj}, plumtree_test_broadcast_handler),
+    {reply, ok, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
