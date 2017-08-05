@@ -26,7 +26,8 @@
          modify/3,
          modify/4,
          is_stale/2,
-         reconcile/2]).
+         reconcile/2,
+         descends/2]).
 
 -type test_object()     :: dvvset:clock().
 -type test_context()    :: dvvset:vector().

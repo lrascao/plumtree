@@ -31,6 +31,11 @@
 %% `false' otherwise
 -callback is_stale(any()) -> boolean().
 
+%% Return true if the first message argument (given the message id) is causally newer than the
+%% second message argument (given message id as well)
+%% `false' otherwise
+-callback is_stale(any(), any()) -> boolean().
+
 %% Return the message associated with the given message id. In some cases a message
 %% has already been sent with information that subsumes the message associated with the given
 %% message id. In this case, `stale' is returned.

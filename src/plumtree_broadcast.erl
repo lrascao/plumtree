@@ -457,8 +457,13 @@ handle_ihave_reply({graft, State}, Message, IgnoredMsgs, GraftMsgs) ->
     {IgnoredMsgs, GraftMsgs ++ [Message], State}.
 
 handle_ihave({MessageId, Round, Root}, From,
-             #state{mod = Mod} = State) ->
+             #state{mod = Mod} = State0) ->
     Stale = Mod:is_stale(MessageId),
+    %% We now know that this peer has the provided message id, in this case
+    %% it serves no purpose to inform him back that we also have the same message
+    %% (or one that is subsumed), so we remove the provided message id from
+    %% the outstanding lazy push list to that peer
+    State = drop_stale_outstanding(From, MessageId, State0),
     handle_ihave(Stale, MessageId, Round, Root, From, State).
 
 handle_ihave(true, _MessageId, _Round, _Root, _From, State) -> %% stale i_have
@@ -678,6 +683,19 @@ add_outstanding(MessageId, Round, Root, Peer, State=#state{outstanding=All}) ->
     Updated = set_outstanding(Peer,
                               ordsets:add_element({MessageId, Round, Root}, Existing),
                               All),
+    State#state{outstanding=Updated}.
+
+drop_stale_outstanding(Peer, MessageId0, #state{outstanding=All}=State) ->
+    Existing = existing_outstanding(Peer, All),
+    %% for each of the messages provided drop all outstanding ones that
+    %% are subsumed and can be dropped from the lazy push
+    NewOutstanding = ordsets:filter(fun({MessageId, Mod, _Round, _Root}) ->
+                                        %% if the provided message id is causally newer than
+                                        %% the one that is to be lazy pushed then filter it out
+                                        %% as it is unnecessary to send it out
+                                        not Mod:is_stale(MessageId0, MessageId)
+                                    end, Existing),
+    Updated = set_outstanding(Peer, NewOutstanding, All),
     State#state{outstanding=Updated}.
 
 set_outstanding(Peer, Outstanding, All) ->

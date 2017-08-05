@@ -27,7 +27,7 @@
 %% plumtree_broadcast_handler callbacks
 -export([broadcast_data/1,
          merge/2,
-         is_stale/1,
+         is_stale/1, is_stale/2,
          graft/1,
          exchange/1]).
 
@@ -144,6 +144,15 @@ is_stale({Key, Context}) ->
         Existing ->
             plumtree_test_object:is_stale(Context, Existing)
     end.
+
+%% Return true if the first message argument (given the message id) is causally newer than the
+%% second message argument (given message id as well)
+%% `false' otherwise
+-spec is_stale(any(), any()) -> boolean().
+is_stale({Key, Context1}, {Key, Context2}) ->
+    %% returns true (stale) when context1 is causally newer or equal to context2
+    plumtree_test_object:descends(Context1, Context2);
+is_stale(_, _) -> false.
 
 %% Return the message associated with the given message id. In some cases a message
 %% has already been sent with information that subsumes the message associated with the given
