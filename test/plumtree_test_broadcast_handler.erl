@@ -64,7 +64,7 @@ get(Key) ->
 -spec put(Key :: any(),
           Value :: any()) -> ok.
 put(Key, Value) ->
-    gen_server:call(?SERVER, {put, Key, Value}).
+    plumtree_broadcast:broadcast({Key, Value}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -80,12 +80,6 @@ init([]) ->
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, state()) -> {reply, term(), state()}.
-handle_call({put, Key, Value}, _From, State) ->
-    Existing = dbread(Key),
-    UpdatedObj = plumtree_test_object:modify(Existing, Value, this_server_id()),
-    dbwrite(Key, UpdatedObj),
-    plumtree_broadcast:broadcast({Key, UpdatedObj}, plumtree_test_broadcast_handler),
-    {reply, ok, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
@@ -116,11 +110,14 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Return a two-tuple of message id and payload from a given broadcast
 -spec broadcast_data(any()) -> {any(), any()}.
-broadcast_data({Key, Object}) ->
-    MsgId = {Key, plumtree_test_object:context(Object)},
+broadcast_data({Key, Value}) ->
+    Existing = dbread(Key),
+    UpdatedObj = plumtree_test_object:modify(Existing, Value, this_server_id()),
+    dbwrite(Key, UpdatedObj),
+    MsgId = {Key, plumtree_test_object:context(UpdatedObj)},
     lager:info("broadcast_data(~p), msg id: ~p",
-               [Object, MsgId]),
-    {MsgId, Object}.
+               [UpdatedObj, MsgId]),
+    {MsgId, UpdatedObj}.
 
 %% Given the message id and payload, merge the message in the local state.
 %% If the message has already been received return `false', otherwise return `true'

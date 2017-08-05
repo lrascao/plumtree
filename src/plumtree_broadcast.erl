@@ -24,7 +24,7 @@
 %% API
 -export([start_link/0,
          start_link/5,
-         broadcast/1, broadcast/2,
+         broadcast/1,
          update/1,
          broadcast_members/0,
          broadcast_members/1,
@@ -177,13 +177,7 @@ start_link(InitMembers, InitEagers, InitLazys, Mod, Opts) ->
 %% `riak_core_broadcast_handler' behaviour.
 -spec broadcast(any()) -> ok.
 broadcast(Broadcast) ->
-    Mod = app_helper:get_env(plumtree, broadcast_mod, undefined),
-    broadcast(Broadcast, Mod).
-
--spec broadcast(any(), module()) -> ok.
-broadcast(Broadcast, Mod) ->
-    {MessageId, Payload} = Mod:broadcast_data(Broadcast),
-    gen_server:cast(?SERVER, {broadcast, [{MessageId, Payload}]}).
+    gen_server:cast(?SERVER, {broadcast, [Broadcast]}).
 
 %% @doc Notifies broadcast server of membership update
 update(LocalState0) ->
@@ -290,8 +284,10 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 
 %% @private
 -spec handle_cast(term(), state()) -> {noreply, state()}.
-handle_cast({broadcast, Messages}, State0) ->
-    State = lists:foldl(fun({MessageId, Message}, StateAcc) ->
+handle_cast({broadcast, Messages},
+            #state{mod = Mod} = State0) ->
+    State = lists:foldl(fun(Broadcast, StateAcc) ->
+                            {MessageId, Message} = Mod:broadcast_data(Broadcast),
                             plumtree_util:log(debug, "received {broadcast, ~p, Msg}",
                                               [MessageId]),
                             State = eager_push(MessageId, Message, StateAcc),
