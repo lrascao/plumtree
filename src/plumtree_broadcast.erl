@@ -739,11 +739,13 @@ add_outstanding(MessageId, Round, Root, Peer, State=#state{outstanding=All}) ->
                               All),
     State#state{outstanding=Updated}.
 
-drop_stale_outstanding(Peer, MessageId0, #state{outstanding=All}=State) ->
+drop_stale_outstanding(Peer, MessageId0,
+                       #state{mod=Mod,
+                              outstanding=All}=State) ->
     Existing = existing_outstanding(Peer, All),
     %% for each of the messages provided drop all outstanding ones that
     %% are subsumed and can be dropped from the lazy push
-    NewOutstanding = ordsets:filter(fun({MessageId, Mod, _Round, _Root}) ->
+    NewOutstanding = ordsets:filter(fun({MessageId, _Round, _Root}) ->
                                         %% if the provided message id is causally newer than
                                         %% the one that is to be lazy pushed then filter it out
                                         %% as it is unnecessary to send it out
