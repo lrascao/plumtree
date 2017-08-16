@@ -643,7 +643,8 @@ maybe_exchange(Peer, State=#state{exchanges=Exchanges}) ->
 exchange(Peer, State=#state{mod = Mod, exchanges=Exchanges}) ->
     case Mod:exchange(Peer) of
         {ok, Pid} ->
-            plumtree_util:log(debug, "started ~p exchange with ~p (~p)", [Peer, Pid]),
+            plumtree_util:log(debug, "~p started exchange with ~p (~p)",
+                              [myself(), Peer, Pid]),
             Ref = monitor(process, Pid),
             State#state{exchanges=[{Peer, Ref, Pid} | Exchanges]};
         {error, _Reason} ->
