@@ -42,7 +42,7 @@
 %% API
 -export([start_link/0,
          get/1,
-         put/2]).
+         put/2, put/3]).
 
 -record(state, {}).
 -type state() :: #state{}.
@@ -65,6 +65,12 @@ get(Key) ->
           Value :: any()) -> ok.
 put(Key, Value) ->
     plumtree_broadcast:broadcast({Key, Value}).
+
+-spec put(Name :: atom(),
+          Key :: any(),
+          Value :: any()) -> ok.
+put(Name, Key, Value) ->
+    plumtree_broadcast:broadcast(Name, {Key, Value}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -182,7 +188,9 @@ graft({Key, Context}) ->
 %% The exchange does not need to account for messages in-flight when it is started or broadcast
 %% during its operation. These can be taken care of in future exchanges.
 -spec exchange(node()) -> {ok, pid()} | {error, term()}.
-exchange(_Node) ->
+exchange(Node) ->
+    lager:info("exchange(~p)",
+               [Node]),
     {ok, self()}.
 
 %% @private

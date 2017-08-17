@@ -18,11 +18,12 @@
 %%
 %% -------------------------------------------------------------------
 
--module(plumtree_sup).
+-module(plumtree_broadcast_sup).
 
 -behaviour(supervisor).
 
--export([start_link/0]).
+-export([start_link/0,
+         start_child/1]).
 
 -export([init/1]).
 
@@ -32,10 +33,12 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+start_child(Name) ->
+    supervisor:start_child(?MODULE, [Name]).
+
 init([]) ->
     Children = lists:flatten(
-                 [?CHILD(plumtree_broadcast, worker),
-                  ?CHILD(plumtree_broadcast_sup, supervisor)]),
-    RestartStrategy = {one_for_one, 10, 10},
+                 [?CHILD(plumtree_broadcast, worker)]),
+    RestartStrategy = {simple_one_for_one, 10, 10},
     {ok, {RestartStrategy, Children}}.
 

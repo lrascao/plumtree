@@ -23,19 +23,27 @@
 
 %% API
 -export([start_link/0,
-         start_link/5,
+         start_link/1,
+         start_link/6,
          broadcast/1,
+         broadcast/2,
          update/1,
+         update/2,
          broadcast_members/0,
          broadcast_members/1,
+         broadcast_members/2,
          exchanges/0,
          exchanges/1,
-         cancel_exchanges/1]).
+         exchanges/2,
+         cancel_exchanges/1,
+         cancel_exchanges/2]).
 
 %% Debug API
 -export([debug_get_peers/2,
          debug_get_peers/3,
-         debug_get_tree/2]).
+         debug_get_peers/4,
+         debug_get_tree/2,
+         debug_get_tree/3]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -62,6 +70,10 @@
           %% `Mod' must be loaded on all members of the clusters and implement the
           %% `riak_core_broadcast_handler' behaviour.
           mod :: atom(),
+
+          %% The name of this process, also use the same name to communicate
+          %% with peer processes
+          name :: atom(),
 
           %% Initially trees rooted at each node are the same.
           %% Portions of that tree belonging to this node are
@@ -127,6 +139,9 @@
 %% to generate membership updates as the ring changes.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
+    start_link(?SERVER).
+
+start_link(Name) ->
     LazyTickPeriod = application:get_env(plumtree, lazy_tick_period,
                                          ?DEFAULT_LAZY_TICK_PERIOD),
     ExchangeTickPeriod = application:get_env(plumtree, exchange_tick_period,
@@ -140,10 +155,12 @@ start_link() ->
     InitEagers = Members,
     InitLazys = [],
     {ok, Mod} = application:get_env(plumtree, broadcast_mod),
-    Res = start_link(Members, InitEagers, InitLazys, Mod,
+    Res = start_link(Name, Members, InitEagers, InitLazys, Mod,
                      [{lazy_tick_period, LazyTickPeriod},
                       {exchange_tick_period, ExchangeTickPeriod}]),
-    PeerService:add_sup_callback(fun ?MODULE:update/1),
+    PeerService:add_sup_callback(fun(LocalState) ->
+                                   update(Name, LocalState)
+                                 end),
     Res.
 
 %% @doc Starts the broadcast server on this node. `InitMembers' must be a list
@@ -163,12 +180,12 @@ start_link() ->
 %%
 %% NOTE: When starting the server using start_link/2 no automatic membership update from
 %% ring_events is registered. Use start_link/0.
--spec start_link([nodename()], [nodename()], [nodename()], module(),
+-spec start_link(Name :: atom(), [nodename()], [nodename()], [nodename()], module(),
                  proplists:proplist()) ->
     {ok, pid()} | ignore | {error, term()}.
-start_link(InitMembers, InitEagers, InitLazys, Mod, Opts) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE,
-                          [InitMembers, InitEagers, InitLazys, Mod, Opts], []).
+start_link(Name, InitMembers, InitEagers, InitLazys, Mod, Opts) ->
+    gen_server:start_link({local, Name}, ?MODULE,
+                          [Name, InitMembers, InitEagers, InitLazys, Mod, Opts], []).
 
 %% @doc Broadcasts a message originating from this node. The message will be delivered to
 %% each node at least once. The `Mod' passed is responsible for handling the message on remote
@@ -177,16 +194,23 @@ start_link(InitMembers, InitEagers, InitLazys, Mod, Opts) ->
 %% `riak_core_broadcast_handler' behaviour.
 -spec broadcast(any()) -> ok.
 broadcast(Broadcast) ->
-    gen_server:cast(?SERVER, {broadcast, [Broadcast]}).
+    broadcast(?SERVER, Broadcast).
+
+-spec broadcast(atom(), any()) -> ok.
+broadcast(Name, Broadcast) ->
+    gen_server:cast(Name, {broadcast, [Broadcast]}).
 
 %% @doc Notifies broadcast server of membership update
 update(LocalState0) ->
+    update(?SERVER, LocalState0).
+
+update(Name, LocalState0) ->
     PeerService = application:get_env(plumtree,
                                       peer_service,
                                       partisan_peer_service),
     LocalState = PeerService:decode(LocalState0),
     % lager:info("Update triggered with: ~p", [LocalState]),
-    gen_server:cast(?SERVER, {update, LocalState}).
+    gen_server:cast(Name, {update, LocalState}).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
 %% Wait indefinitely for a response is returned from the process
@@ -198,7 +222,12 @@ broadcast_members() ->
 %% Waits `Timeout' ms for a response from the server
 -spec broadcast_members(infinity | pos_integer()) -> ordsets:ordset(nodename()).
 broadcast_members(Timeout) ->
-    gen_server:call(?SERVER, broadcast_members, Timeout).
+    broadcast_members(?SERVER, Timeout).
+
+-spec broadcast_members(atom(),
+                        infinity | pos_integer()) -> ordsets:ordset(nodename()).
+broadcast_members(Name, Timeout) ->
+    gen_server:call(Name, broadcast_members, Timeout).
 
 %% @doc return a list of exchanges, started by broadcast on thisnode, that are running
 -spec exchanges() -> exchanges().
@@ -208,7 +237,11 @@ exchanges() ->
 %% @doc returns a list of exchanges, started by broadcast on `Node', that are running
 -spec exchanges(node()) -> exchanges().
 exchanges(Node) ->
-    gen_server:call({?SERVER, Node}, exchanges, infinity).
+    exchanges(?SERVER, Node).
+
+-spec exchanges(atom(), node()) -> exchanges().
+exchanges(Name, Node) ->
+    gen_server:call({Name, Node}, exchanges, infinity).
 
 %% @doc cancel exchanges started by this node.
 -spec cancel_exchanges(all              |
@@ -216,7 +249,16 @@ exchanges(Node) ->
                        reference()      |
                        pid()) -> exchanges().
 cancel_exchanges(WhichExchanges) ->
-    gen_server:call(?SERVER, {cancel_exchanges, WhichExchanges}, infinity).
+    cancel_exchanges(?SERVER, WhichExchanges).
+
+-spec cancel_exchanges(atom(),
+                       all              |
+                       {peer, node()}   |
+                       {mod, module()}  |
+                       reference()      |
+                       pid()) -> exchanges().
+cancel_exchanges(Name, WhichExchanges) ->
+    gen_server:call(Name, {cancel_exchanges, WhichExchanges}, infinity).
 
 %%%===================================================================
 %%% Debug API
@@ -226,22 +268,31 @@ cancel_exchanges(WhichExchanges) ->
 %% Wait indefinitely for a response is returned from the process
 -spec debug_get_peers(node(), node()) -> {ordsets:ordset(node()), ordsets:ordset(node())}.
 debug_get_peers(Node, Root) ->
-    debug_get_peers(Node, Root, infinity).
+    debug_get_peers(?SERVER, Node, Root, infinity).
+
+-spec debug_get_peers(atom(), node(), node()) -> {ordsets:ordset(node()), ordsets:ordset(node())}.
+debug_get_peers(Name, Node, Root) ->
+    debug_get_peers(Name, Node, Root, infinity).
 
 %% @doc return the peers for `Node' for the tree rooted at `Root'.
 %% Waits `Timeout' ms for a response from the server
--spec debug_get_peers(node(), node(), infinity | pos_integer()) ->
+-spec debug_get_peers(atom(), node(), node(), infinity | pos_integer()) ->
                              {ordsets:ordset(node()), ordsets:ordset(node())}.
-debug_get_peers(Node, Root, Timeout) ->
-    gen_server:call({?SERVER, Node}, {get_peers, Root}, Timeout).
+debug_get_peers(Name, Node, Root, Timeout) ->
+    gen_server:call({Name, Node}, {get_peers, Root}, Timeout).
 
 %% @doc return peers for all `Nodes' for tree rooted at `Root'
 %% Wait indefinitely for a response is returned from the process
 -spec debug_get_tree(node(), [node()]) ->
                             [{node(), {ordsets:ordset(node()), ordsets:ordset(node())}}].
 debug_get_tree(Root, Nodes) ->
+    debug_get_tree(?SERVER, Root, Nodes).
+
+-spec debug_get_tree(atom(), node(), [node()]) ->
+                            [{node(), {ordsets:ordset(node()), ordsets:ordset(node())}}].
+debug_get_tree(Name, Root, Nodes) ->
     [begin
-         Peers = try debug_get_peers(Node, Root)
+         Peers = try debug_get_peers(Name, Node, Root)
                  catch _:_ -> down
                  end,
          {Node, Peers}
@@ -253,14 +304,15 @@ debug_get_tree(Root, Nodes) ->
 
 %% @private
 -spec init([[any()], ...]) -> {ok, state()}.
-init([AllMembers, InitEagers, InitLazys, Mod, Opts]) ->
+init([Name, AllMembers, InitEagers, InitLazys, Mod, Opts]) ->
     plumtree_util:log(debug, "init ~p peers, eager: ~p, lazy: ~p",
                       [AllMembers, InitEagers, InitLazys]),
     LazyTickPeriod = proplists:get_value(lazy_tick_period, Opts),
     ExchangeTickPeriod = proplists:get_value(exchange_tick_period, Opts),
     schedule_lazy_tick(LazyTickPeriod),
     schedule_exchange_tick(ExchangeTickPeriod),
-    State1 = #state{ mod = Mod,
+    State1 = #state{ name = Name,
+                     mod = Mod,
                      outstanding = orddict:new(),
                      exchanges=[],
                      lazy_tick_period = LazyTickPeriod,
@@ -279,26 +331,28 @@ handle_call(broadcast_members, _From, State=#state{all_members=AllMembers}) ->
 handle_call(exchanges, _From, State=#state{exchanges=Exchanges}) ->
     {reply, Exchanges, State};
 handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
-    Cancelled = cancel_exchanges(WhichExchanges, State#state.exchanges),
+    Cancelled = cancel_exchanges_prv(WhichExchanges, State#state.exchanges),
     {reply, Cancelled, State}.
 
 %% @private
 -spec handle_cast(term(), state()) -> {noreply, state()}.
 handle_cast({broadcast, Messages},
-            #state{mod = Mod} = State0) ->
+            #state{name = Name,
+                   mod = Mod} = State0) ->
     State = lists:foldl(fun(Broadcast, StateAcc) ->
                             {MessageId, Message} = Mod:broadcast_data(Broadcast),
-                            plumtree_util:log(debug, "received {broadcast, ~p, Msg}",
-                                              [MessageId]),
+                            plumtree_util:log(debug, "~p received {broadcast, ~p, Msg}",
+                                              [Name, MessageId]),
                             State = eager_push(MessageId, Message, StateAcc),
                             schedule_lazy_push(MessageId, State)
                         end, State0, Messages),
     {noreply, State};
 handle_cast({broadcast, From, Messages},
-            #state{mod = Mod} = State0) ->
+            #state{name = Name,
+                   mod = Mod} = State0) ->
     State = lists:foldl(fun({MessageId, Message, Round, Root}, StateAcc) ->
-                            plumtree_util:log(debug, "received {broadcast, Msg, ~p, ~p, ~p} from ~p",
-                                              [MessageId, Round, Root, From]),
+                            plumtree_util:log(debug, "~p received {broadcast, Msg, ~p, ~p, ~p} from ~p",
+                                              [Name, MessageId, Round, Root, From]),
                             Valid = Mod:merge(MessageId, Message),
                             handle_broadcast(Valid, MessageId, Message, Round,
                                              Root, From, StateAcc)
@@ -336,7 +390,7 @@ handle_cast({i_have, From, Messages}, State0) ->
                                         [length(GraftMsgs), From]),
                       [{graft, myself(), GraftMsgs}]
               end,
-    _ = send(BulkMsg, From),
+    _ = send(BulkMsg, From, State),
     {noreply, State};
 handle_cast({ignored_i_have, From, Messages}, State) ->
     plumtree_util:log(debug, "received ~p ignored_i_have messages from ~p",
@@ -350,7 +404,7 @@ handle_cast({graft, From, Messages}, State) ->
     plumtree_util:log(debug, "received ~p graft messages from ~p",
                       [length(Messages), From]),
     {BroadcastMsgs, State1} = handle_grafts(From, Messages, State),
-    _ = send({broadcast, myself(), BroadcastMsgs}, From),
+    _ = send({broadcast, myself(), BroadcastMsgs}, From, State),
     {noreply, State1};
 handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
                                             common_eagers=EagerPeers0,
@@ -413,7 +467,7 @@ handle_broadcast(false, _MessageId, _Message, _Round, Root, From, State0) -> %% 
         State ->
             plumtree_util:log(debug, "moving peer ~p from eager to lazy on tree rooted at ~p, requesting it to also do the same",
                               [From, Root]),
-            _ = send({prune, Root, myself()}, From),
+            _ = send({prune, Root, myself()}, From, State),
             State
     end;
 %% The next clause is designed to allow the callback to override the message id
@@ -548,7 +602,7 @@ eager_push([], _MessageId, _Message, _Round, _Root, _From, State) -> State;
 eager_push(Peers, MessageId, Message, Round, Root, From, State) ->
     plumtree_util:log(debug, "eager push to peers ~p for tree rooted on ~p originating from ~p",
                       [Peers, Root, From]),
-    _ = send({broadcast, myself(), [{MessageId, Message, Round, Root}]}, Peers),
+    _ = send({broadcast, myself(), [{MessageId, Message, Round, Root}]}, Peers, State),
     State.
 
 schedule_lazy_push(MessageId, State) ->
@@ -560,14 +614,14 @@ schedule_lazy_push(MessageId, Round, Root, From, State) ->
                [Peers, {MessageId, Round, Root, From}]),
     add_all_outstanding(MessageId, Round, Root, Peers, State).
 
-send_lazy(#state{outstanding=Outstanding}) ->
-    [send_lazy(Peer, Messages) || {Peer, Messages} <- orddict:to_list(Outstanding)].
+send_lazy(#state{outstanding=Outstanding} = State) ->
+    [send_lazy(Peer, Messages, State) || {Peer, Messages} <- orddict:to_list(Outstanding)].
 
-send_lazy(_Peer, []) -> ok;
-send_lazy(Peer, Messages) ->
+send_lazy(_Peer, [], _State) -> ok;
+send_lazy(Peer, Messages, State) ->
     plumtree_util:log(debug, "flushing ~p outstanding lazy pushes to peer ~p",
                       [ordsets:size(Messages), Peer]),
-    send({i_have, myself(), Messages}, Peer).
+    send({i_have, myself(), Messages}, Peer, State).
 
 maybe_exchange(State) ->
     Root = random_root(State),
@@ -589,16 +643,17 @@ maybe_exchange(Peer, State=#state{exchanges=Exchanges}) ->
 exchange(Peer, State=#state{mod = Mod, exchanges=Exchanges}) ->
     case Mod:exchange(Peer) of
         {ok, Pid} ->
-            plumtree_util:log(debug, "started ~p exchange with ~p (~p)", [Peer, Pid]),
+            plumtree_util:log(debug, "~p started exchange with ~p (~p)",
+                              [myself(), Peer, Pid]),
             Ref = monitor(process, Pid),
             State#state{exchanges=[{Peer, Ref, Pid} | Exchanges]};
         {error, _Reason} ->
             State
     end.
 
-cancel_exchanges(all, Exchanges) ->
+cancel_exchanges_prv(all, Exchanges) ->
     kill_exchanges(Exchanges);
-cancel_exchanges(WhichProc, Exchanges) when is_reference(WhichProc) orelse
+cancel_exchanges_prv(WhichProc, Exchanges) when is_reference(WhichProc) orelse
                                             is_pid(WhichProc) ->
     KeyPos = case is_reference(WhichProc) of
               true -> 3;
@@ -610,7 +665,7 @@ cancel_exchanges(WhichProc, Exchanges) when is_reference(WhichProc) orelse
             kill_exchange(Exchange),
             [Exchange]
     end;
-cancel_exchanges(Which, Exchanges) ->
+cancel_exchanges_prv(Which, Exchanges) ->
     Filter = exchange_filter(Which),
     ToCancel = [Ex || Ex <- Exchanges, Filter(Ex)],
     kill_exchanges(ToCancel).
@@ -685,11 +740,13 @@ add_outstanding(MessageId, Round, Root, Peer, State=#state{outstanding=All}) ->
                               All),
     State#state{outstanding=Updated}.
 
-drop_stale_outstanding(Peer, MessageId0, #state{outstanding=All}=State) ->
+drop_stale_outstanding(Peer, MessageId0,
+                       #state{mod=Mod,
+                              outstanding=All}=State) ->
     Existing = existing_outstanding(Peer, All),
     %% for each of the messages provided drop all outstanding ones that
     %% are subsumed and can be dropped from the lazy push
-    NewOutstanding = ordsets:filter(fun({MessageId, Mod, _Round, _Root}) ->
+    NewOutstanding = ordsets:filter(fun({MessageId, _Round, _Root}) ->
                                         %% if the provided message id is causally newer than
                                         %% the one that is to be lazy pushed then filter it out
                                         %% as it is unnecessary to send it out
@@ -776,18 +833,18 @@ all_peers(Root, Sets, Default) ->
 %% allow either sending several messages to a peer,
 %% the same message to several peers or one message
 %% to a single peer
-send(Msgs, Peer) when is_list(Msgs) ->
-    [send(Msg, Peer) || Msg <- Msgs];
-send(Msg, Peers) when is_list(Peers) ->
-    [send(Msg, P) || P <- Peers];
-send(Msg, P) ->
+send(Msgs, Peer, State) when is_list(Msgs) ->
+    [send(Msg, Peer, State) || Msg <- Msgs];
+send(Msg, Peers, State) when is_list(Peers) ->
+    [send(Msg, P, State) || P <- Peers];
+send(Msg, P, #state{name = Name}) ->
     PeerService = application:get_env(plumtree,
                                       peer_service,
                                       partisan_peer_service),
     PeerServiceManager = PeerService:manager(),
-    ok = PeerServiceManager:forward_message(P, ?SERVER, Msg).
+    ok = PeerServiceManager:forward_message(P, Name, Msg).
     %% TODO: add debug logging
-    %% gen_server:cast({?SERVER, P}, Msg).
+    %% gen_server:cast({Name, P}, Msg).
 
 schedule_lazy_tick(Period) ->
     schedule_tick(lazy_tick, broadcast_lazy_timer, Period).
@@ -797,7 +854,7 @@ schedule_exchange_tick(Period) ->
 
 schedule_tick(Message, Timer, Default) ->
     TickMs = application:get_env(plumtree, Timer, Default),
-    erlang:send_after(TickMs, ?MODULE, Message).
+    erlang:send_after(TickMs, self(), Message).
 
 reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
     State#state{

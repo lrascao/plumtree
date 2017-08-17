@@ -20,10 +20,15 @@
 
 -module(plumtree).
 
--export([start/0, stop/0]).
+-export([start/0, stop/0,
+         new/1]).
 
 start() ->
     application:ensure_all_started(plumtree).
 
 stop() ->
     application:stop(plumtree).
+
+%% @doc Starts a new broadcast worker with given name.
+new(Name) ->
+    plumtree_broadcast_sup:start_child(Name).

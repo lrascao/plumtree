@@ -83,13 +83,18 @@ groups() ->
       [membership_simple_test,
        membership_high_client_test,
        broadcast_simple_test, 
+       broadcast_simple_multiple_processes_test, 
        broadcast_high_active_test,
        broadcast_low_active_test,
        broadcast_high_client_test,
-       broadcast_high_client_high_active_test]}].
+       broadcast_high_client_high_active_test,
+       broadcast_high_client_high_active_multiple_processes_test]}].
 
 broadcast_simple_test(Config) ->
     broadcast_test(Config).
+
+broadcast_simple_multiple_processes_test(Config) ->
+    broadcast_test([{n_broadcast_process, 5}] ++ Config).
 
 broadcast_high_client_test(Config) ->
     broadcast_test([{n_clients, 11}] ++ Config).
@@ -106,6 +111,12 @@ broadcast_high_client_high_active_test(Config) ->
     broadcast_test([{max_active_size, 9},
                     {min_active_size, 9},
                     {n_clients, 11}] ++ Config).
+
+broadcast_high_client_high_active_multiple_processes_test(Config) ->
+    broadcast_test([{max_active_size, 6},
+                    {min_active_size, 6},
+                    {n_clients, 11},
+                    {n_broadcast_process, 10}] ++ Config).
 
 broadcast_high_client_low_active_test(Config) ->
     broadcast_test([{max_active_size, 6},
@@ -133,6 +144,7 @@ membership_test(Config) ->
     % Partition = proplists:get_value(partition, Config, false),
     MaxActiveSize = proplists:get_value(max_active_size, Config, 6),
     MinActiveSize = proplists:get_value(min_active_size, Config, 3),
+    NBroadcastProcess = proplists:get_value(n_broadcast_process, Config, 1),
 
     %% Specify servers.
     Servers = node_list(NServers, "server", Config),
@@ -141,12 +153,13 @@ membership_test(Config) ->
     Clients = node_list(NClients, "client", Config),
 
     %% Start nodes.
-    Nodes = start(default_manager_test, Config,
+    Nodes = start(membership_test, Config,
                   [{partisan_peer_service_manager, Manager},
                    {max_active_size, MaxActiveSize},
                    {min_active_size, MinActiveSize},
                    {servers, Servers},
-                   {clients, Clients}]),
+                   {clients, Clients},
+                   {n_broadcast_process, NBroadcastProcess}]),
 
     %% Pause for clustering, allow one second per node
     timer:sleep(1000 * (NServers + NClients)),
@@ -196,6 +209,7 @@ broadcast_test(Config) ->
     Partition = proplists:get_value(partition, Config, false),
     MaxActiveSize = proplists:get_value(max_active_size, Config, 6),
     MinActiveSize = proplists:get_value(min_active_size, Config, 3),
+    NBroadcastProcess = proplists:get_value(n_broadcast_process, Config, 1),
 
     %% Specify servers.
     Servers = node_list(NServers, "server", Config),
@@ -204,12 +218,13 @@ broadcast_test(Config) ->
     Clients = node_list(NClients, "client", Config),
 
     %% Start nodes.
-    Nodes = start(default_manager_test, Config,
+    Nodes = start(broadcast_test, Config,
                   [{partisan_peer_service_manager, Manager},
                    {max_active_size, MaxActiveSize},
                    {min_active_size, MinActiveSize},
                    {servers, Servers},
-                   {clients, Clients}]),
+                   {clients, Clients},
+                   {n_broadcast_process, NBroadcastProcess}]),
 
     %% Pause for clustering, allow one second per node
     timer:sleep(1000 * (NServers + NClients)),
@@ -226,12 +241,52 @@ broadcast_test(Config) ->
            [BroadcastRounds1]),
     lists:foreach(fun(_) ->
                     {_, Node} = plumtree_test_utils:select_random(Nodes),
+                    %% generate a Key
+                    Key = list_to_atom("k" ++
+                                       integer_to_list(rand_compat:uniform(10000))),
+                    %% shard broadcasts per key
+                    Hash = erlang:phash2(Key, NBroadcastProcess) + 1,
+                    Name = list_to_atom("test" ++ integer_to_list(Hash)),
                     ok = rpc:call(Node,
                                   plumtree_test_broadcast_handler, put,
-                                  [k, rand_compat:uniform()])
+                                  [Name, Key, rand_compat:uniform()])
                   end, lists:seq(1, BroadcastRounds1)),
-    %% allow 500ms per broadcast to settle
-    timer:sleep(200 * BroadcastRounds1),
+
+    %% send out a control broadcast until it is seen at all nodes
+    BroadcastSettleFun = fun() ->
+                            %% select a random node to send out the control broadcast
+                            Rand0 = rand_compat:uniform(),
+                            {_, RandomNode} = plumtree_test_utils:select_random(Nodes),
+                            ok = rpc:call(RandomNode,
+                                          plumtree_test_broadcast_handler, put,
+                                          [kcontrol, Rand0]),
+                            ct:pal("requested node ~p to broadcast {kcontrol, ~p}",
+                                   [RandomNode, Rand0]),
+                            %% allow a small time window for propagation
+                            timer:sleep(100),
+                            %% now check that all others have received it
+                            lists:foldl(fun(_, {false, _} = Acc) -> Acc;
+                                            ({_, Node}, _) ->
+                                            case rpc:call(Node, plumtree_test_broadcast_handler,
+                                                          get, [kcontrol]) of
+                                                {error, not_found} ->
+                                                    {false, {not_found, Node}};
+                                                {ok, NodeRand} when NodeRand =:= Rand0 -> true;
+                                                {ok, NodeRand} ->
+                                                    {false, {Node, Rand0, NodeRand}}
+                                            end
+                                         end, undefined, Nodes)
+                         end,
+    case wait_until(BroadcastSettleFun, 60 * 10, 100) of
+        ok ->
+            ok;
+        {fail, {false, {not_found, Node}}} ->
+            ct:fail("node ~p never got the control gossip",
+                   [Node]);
+        {fail, {false, {Node, Expected0, Contains0}}} ->
+            ct:fail("node ~p had control value ~p, expected ~p",
+                    [Node, Contains0, Expected0])
+    end,
 
     %% check membership after broadcast storm
     check_connected_property(Nodes, [{push_list, [eager, lazy]}]),
@@ -256,10 +311,6 @@ broadcast_test(Config) ->
                 end,
     %% now check that the gossip has reached all nodes
     lists:foreach(fun({_, Node}) ->
-                    {Eagers, Lazys} = rpc:call(Node, plumtree_broadcast, debug_get_peers,
-                                              [Node, Node]),
-                    ct:pal("node ~p peers, eager: ~p, lazy: ~p",
-                           [Node, Eagers, Lazys]),
                     VerifyBroadcastFun = fun() ->
                                             VerifyFun(Node, Rand)
                                          end,
@@ -397,6 +448,8 @@ start(_Case, Config, Options) ->
 
             %% configure plumtree
             ok = rpc:call(Node, application, set_env, [plumtree, broadcast_mod, plumtree_test_broadcast_handler]),
+            NBroadcastProcs = proplists:get_value(n_broadcast_process, Config, 1),
+            ok = rpc:call(Node, application, set_env, [plumtree, n_broadcast_process, NBroadcastProcs]),
             %% reduce the broacast exchange period down to 1 second
             ok = rpc:call(Node, application, set_env, [plumtree, broadcast_exchange_timer, 1000]),
             %% initialize the test broadcast handler
@@ -410,7 +463,13 @@ start(_Case, Config, Options) ->
                         %% Start plumtree.
                         {ok, _} = rpc:call(Node, plumtree, start, []),
                         %% set debug log level for test run
-                        ok = rpc:call(Node, lager, set_loglevel, [{lager_file_backend,"log/console.log"}, debug])
+                        ok = rpc:call(Node, lager, set_loglevel, [{lager_file_backend,"log/console.log"}, debug]),
+                        %% start custom named worker on each node
+                        lists:foreach(fun(N) ->
+                                        {ok, _} = rpc:call(Node, plumtree, new,
+                                                           [list_to_atom("test" ++
+                                                                         integer_to_list(N))])
+                                      end, lists:seq(1, proplists:get_value(n_broadcast_process, Config, 1)))
                end,
     lists:foreach(StartFun, Nodes),
 
@@ -650,3 +709,15 @@ wait_until(Fun, Retry, Delay) when Retry > 0 ->
             timer:sleep(Delay),
             wait_until(Fun, Retry-1, Delay)
     end.
+
+%% @private
+random_key() ->
+    random_key(1000000).
+
+random_key(N) ->
+    list_to_atom("k_" ++
+                 integer_to_list(rand_compat:uniform(N))).
+
+broadcast_process_shard(K, NShards) ->
+    list_to_atom("test" ++
+                 integer_to_list(erlang:phash2(K, NShards) + 1)).
