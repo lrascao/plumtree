@@ -544,7 +544,9 @@ cluster({_, Node}, {_, OtherNode}) ->
     ok = rpc:call(Node,
                   partisan_peer_service,
                   join,
-                  [{OtherNode, {127, 0, 0, 1}, PeerPort}]).
+                  [#{name => OtherNode,
+                     listen_addrs => [#{ip => {127, 0, 0, 1}, port => PeerPort}],
+                     parallelism => 1}]).
 
 %% @private
 codepath() ->
