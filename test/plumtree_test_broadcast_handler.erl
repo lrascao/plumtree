@@ -29,7 +29,9 @@
          merge/2,
          is_stale/1, is_stale/2,
          graft/1,
-         exchange/1]).
+         exchange/1,
+         marshal/1,
+         unmarshal/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -64,13 +66,13 @@ get(Key) ->
 -spec put(Key :: any(),
           Value :: any()) -> ok.
 put(Key, Value) ->
-    plumtree_broadcast:broadcast({Key, Value}).
+    plumtree_broadcast:broadcast([{Key, Value}]).
 
 -spec put(Name :: atom(),
           Key :: any(),
           Value :: any()) -> ok.
 put(Name, Key, Value) ->
-    plumtree_broadcast:broadcast(Name, {Key, Value}).
+    plumtree_broadcast:broadcast(Name, [{Key, Value}]).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -124,6 +126,16 @@ broadcast_data({Key, Value}) ->
     lager:info("broadcast_data(~p), msg id: ~p",
                [UpdatedObj, MsgId]),
     {MsgId, UpdatedObj}.
+
+%% Marshal a list of terms into opaque data.
+-spec marshal(list(any())) -> {ok, any()}.
+marshal(Messages) ->
+    {ok, Messages}.
+
+%% Unmarshall opaque data into a list of terms.
+-spec unmarshal(any()) -> {ok, list(any())}.
+unmarshal(Data) ->
+    {ok, Data}.
 
 %% Given the message id and payload, merge the message in the local state.
 %% If the message has already been received return `false', otherwise return `true'

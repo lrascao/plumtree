@@ -27,6 +27,7 @@
          start_link/6,
          broadcast/1,
          broadcast/2,
+         broadcast/3,
          update/1,
          update/2,
          broadcast_members/0,
@@ -191,14 +192,21 @@ start_link(Name, InitMembers, InitEagers, InitLazys, Mod, Opts) ->
 %% each node at least once. The `Mod' passed is responsible for handling the message on remote
 %% nodes as well as providing some other information both locally and and on other nodes.
 %% `Mod' must be loaded on all members of the clusters and implement the
-%% `riak_core_broadcast_handler' behaviour.
--spec broadcast(any()) -> ok.
-broadcast(Broadcast) ->
-    broadcast(?SERVER, Broadcast).
+%% `plumtree_broadcast_handler' behaviour.
+-spec broadcast(list(any())) -> ok.
+broadcast(Messages) ->
+    broadcast(?SERVER, Messages).
 
--spec broadcast(atom(), any()) -> ok.
-broadcast(Name, Broadcast) ->
-    gen_server:cast(Name, {broadcast, [Broadcast]}).
+-spec broadcast(atom(), list(any())) -> ok.
+broadcast(Name, Messages) ->
+    broadcast(undefined, Name, Messages).
+
+-spec broadcast(atom(), atom(), list(any())) -> ok.
+broadcast(undefined, Name, Messages) ->
+    gen_server:cast(Name, {broadcast, Messages});
+broadcast(Mod, Name, Messages) ->
+    {ok, Data} = Mod:marshal(Messages),
+    gen_server:cast(Name, {broadcast, Data}).
 
 %% @doc Notifies broadcast server of membership update
 update(LocalState0) ->
@@ -336,9 +344,10 @@ handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
 
 %% @private
 -spec handle_cast(term(), state()) -> {noreply, state()}.
-handle_cast({broadcast, Messages},
+handle_cast({broadcast, Data},
             #state{name = Name,
                    mod = Mod} = State0) ->
+    {ok, Messages} = Mod:unmarshal(Data),
     State = lists:foldl(fun(Broadcast, StateAcc) ->
                             {MessageId, Message} = Mod:broadcast_data(Broadcast),
                             plumtree_util:log(debug, "~p received {broadcast, ~p, Msg}",
