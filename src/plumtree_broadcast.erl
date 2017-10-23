@@ -29,7 +29,7 @@
          broadcast/2,
          broadcast/3,
          update/1,
-         update/2,
+         update/3,
          broadcast_members/0,
          broadcast_members/1,
          broadcast_members/2,
@@ -121,7 +121,9 @@
           lazy_tick_period :: non_neg_integer(),
 
           %% Exchange tick period in milliseconds that may or may not occur
-          exchange_tick_period :: non_neg_integer()
+          exchange_tick_period :: non_neg_integer(),
+
+          peer_service_manager = undefined :: atom()
 
          }).
 -type state()           :: #state{}.
@@ -156,11 +158,13 @@ start_link(Name) ->
     InitEagers = Members,
     InitLazys = [],
     {ok, Mod} = application:get_env(plumtree, broadcast_mod),
+    PeerServiceManager = PeerService:manager(),
     Res = start_link(Name, Members, InitEagers, InitLazys, Mod,
                      [{lazy_tick_period, LazyTickPeriod},
-                      {exchange_tick_period, ExchangeTickPeriod}]),
+                      {exchange_tick_period, ExchangeTickPeriod},
+                      {peer_service_manager, PeerServiceManager}]),
     PeerService:add_sup_callback(fun(LocalState) ->
-                                   update(Name, LocalState)
+                                   update(Name, PeerService, LocalState)
                                  end),
     Res.
 
@@ -210,12 +214,12 @@ broadcast(Mod, Name, Messages) ->
 
 %% @doc Notifies broadcast server of membership update
 update(LocalState0) ->
-    update(?SERVER, LocalState0).
-
-update(Name, LocalState0) ->
     PeerService = application:get_env(plumtree,
                                       peer_service,
                                       partisan_peer_service),
+    update(?SERVER, PeerService, LocalState0).
+
+update(Name, PeerService, LocalState0) ->
     LocalState = PeerService:decode(LocalState0),
     % lager:info("Update triggered with: ~p", [LocalState]),
     gen_server:cast(Name, {update, LocalState}).
@@ -317,6 +321,7 @@ init([Name, AllMembers, InitEagers, InitLazys, Mod, Opts]) ->
                       [AllMembers, InitEagers, InitLazys]),
     LazyTickPeriod = proplists:get_value(lazy_tick_period, Opts),
     ExchangeTickPeriod = proplists:get_value(exchange_tick_period, Opts),
+    PeerServiceManager = proplists:get_value(peer_service_manager, Opts),
     schedule_lazy_tick(LazyTickPeriod),
     schedule_exchange_tick(ExchangeTickPeriod),
     State1 = #state{ name = Name,
@@ -324,7 +329,8 @@ init([Name, AllMembers, InitEagers, InitLazys, Mod, Opts]) ->
                      outstanding = orddict:new(),
                      exchanges=[],
                      lazy_tick_period = LazyTickPeriod,
-                     exchange_tick_period = ExchangeTickPeriod},
+                     exchange_tick_period = ExchangeTickPeriod,
+                     peer_service_manager = PeerServiceManager},
     State2 = reset_peers(AllMembers, InitEagers, InitLazys, State1),
     {ok, State2}.
 
@@ -846,14 +852,9 @@ send(Msgs, Peer, State) when is_list(Msgs) ->
     [send(Msg, Peer, State) || Msg <- Msgs];
 send(Msg, Peers, State) when is_list(Peers) ->
     [send(Msg, P, State) || P <- Peers];
-send(Msg, P, #state{name = Name}) ->
-    PeerService = application:get_env(plumtree,
-                                      peer_service,
-                                      partisan_peer_service),
-    PeerServiceManager = PeerService:manager(),
+send(Msg, P, #state{name = Name,
+                    peer_service_manager = PeerServiceManager}) ->
     ok = PeerServiceManager:forward_message(P, Name, Msg).
-    %% TODO: add debug logging
-    %% gen_server:cast({Name, P}, Msg).
 
 schedule_lazy_tick(Period) ->
     schedule_tick(lazy_tick, broadcast_lazy_timer, Period).
