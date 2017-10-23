@@ -22,6 +22,12 @@
 %% Return a two-tuple of message id and payload from a given broadcast
 -callback broadcast_data(any()) -> {any(), any()}.
 
+%% Marshal a list of terms into opaque data.
+-callback marshal(list(any())) -> {ok, any()}.
+
+%% Unmarshall opaque data into a list of terms.
+-callback unmarshal(any()) -> {ok, list(any())}.
+
 %% Given the message id and payload, merge the message in the local state.
 %% If the message has already been received return `false', otherwise return `true'
 %% If a new message id is to be propagated after the merge return `{true, MessageId}`
