@@ -354,25 +354,31 @@ handle_cast({broadcast, Data},
             #state{name = Name,
                    mod = Mod} = State0) ->
     {ok, Messages} = Mod:unmarshal(Data),
-    State = lists:foldl(fun(Broadcast, StateAcc) ->
+    {State1, EagerMsgs} =
+        lists:foldl(fun(Broadcast, {StateAcc0, EagerMsgs0}) ->
                             {MessageId, Message} = Mod:broadcast_data(Broadcast),
                             plumtree_util:log(debug, "~p received {broadcast, ~p, Msg}",
                                               [Name, MessageId]),
-                            State = eager_push(MessageId, Message, StateAcc),
-                            schedule_lazy_push(MessageId, State)
-                        end, State0, Messages),
-    {noreply, State};
-handle_cast({broadcast, From, Messages},
+                            % prepare the lazy pushes to be sent out on a tick
+                            StateAcc1 = schedule_lazy_push(MessageId, StateAcc0),
+                            % prepare the eager pushes to go out immediately
+                            {StateAcc1, [{MessageId, Message, 0, myself()}] ++ EagerMsgs0}
+                    end, {State0, []}, Messages),
+    % flush all accumulated eager
+    ok = eager_bulk_push(EagerMsgs, myself(), myself(), State1),
+    {noreply, State1};
+handle_cast({broadcast, From, Data},
             #state{name = Name,
                    mod = Mod} = State0) ->
-    State = lists:foldl(fun({MessageId, Message, Round, Root}, StateAcc) ->
-                            plumtree_util:log(debug, "~p received {broadcast, Msg, ~p, ~p, ~p} from ~p",
-                                              [Name, MessageId, Round, Root, From]),
-                            Valid = Mod:merge(MessageId, Message),
-                            handle_broadcast(Valid, MessageId, Message, Round,
-                                             Root, From, StateAcc)
-                        end, State0, Messages),
-
+    {ok, Messages} = Mod:unmarshal(Data),
+    State =
+        lists:foldl(fun({MessageId, Message, Round, Root}, StateAcc) ->
+                        plumtree_util:log(debug, "~p received {broadcast, Msg, ~p, ~p, ~p} from ~p",
+                                          [Name, MessageId, Round, Root, From]),
+                        Valid = Mod:merge(MessageId, Message),
+                        handle_broadcast(Valid, MessageId, Message, Round,
+                                         Root, From, StateAcc)
+                    end, State0, Messages),
     {noreply, State};
 handle_cast({prune, Root, From}, State0) ->
     plumtree_util:log(debug, "received ~p from ~p", [{prune, Root}, From]),
@@ -415,11 +421,13 @@ handle_cast({ignored_i_have, From, Messages}, State) ->
                         ack_outstanding(MessageId, Round, Root, From, Acc)
                     end, State, Messages),
     {noreply, State1};
-handle_cast({graft, From, Messages}, State) ->
+handle_cast({graft, From, Messages},
+            #state{mod = Mod} = State) ->
     plumtree_util:log(debug, "received ~p graft messages from ~p",
                       [length(Messages), From]),
     {BroadcastMsgs, State1} = handle_grafts(From, Messages, State),
-    _ = send({broadcast, myself(), BroadcastMsgs}, From, State),
+    {ok, Data} = Mod:marshal(BroadcastMsgs),
+    _ = send({broadcast, myself(), Data}, From, State),
     {noreply, State1};
 handle_cast({update, Members}, State=#state{all_members=BroadcastMembers,
                                             common_eagers=EagerPeers0,
@@ -606,18 +614,26 @@ neighbors_down(Removed, State=#state{common_eagers=CommonEagers, eager_sets=Eage
                 lazy_sets=NewLazySets,
                 outstanding=NewOutstanding}.
 
-eager_push(MessageId, Message, State) ->
-    eager_push(MessageId, Message, 0, myself(), myself(), State).
+eager_bulk_push(Messages0, Root, From,
+                #state{mod = Mod} = State) ->
+    Peers = eager_peers(Root, From, State),
+    plumtree_util:log(debug, "eager push to peers ~p for tree rooted on ~p originating from ~p",
+                      [Peers, Root, From]),
+    {ok, Data} = Mod:marshal(Messages0),
+    _ = send({broadcast, myself(), Data}, Peers, State),
+    ok.
 
 eager_push(MessageId, Message, Round, Root, From, State) ->
     Peers = eager_peers(Root, From, State),
     eager_push(Peers, MessageId, Message, Round, Root, From, State).
 
 eager_push([], _MessageId, _Message, _Round, _Root, _From, State) -> State;
-eager_push(Peers, MessageId, Message, Round, Root, From, State) ->
+eager_push(Peers, MessageId, Message, Round, Root, From,
+           #state{mod = Mod} = State) ->
     plumtree_util:log(debug, "eager push to peers ~p for tree rooted on ~p originating from ~p",
                       [Peers, Root, From]),
-    _ = send({broadcast, myself(), [{MessageId, Message, Round, Root}]}, Peers, State),
+    {ok, Data} = Mod:marshal([{MessageId, Message, Round, Root}]),
+    _ = send({broadcast, myself(), Data}, Peers, State),
     State.
 
 schedule_lazy_push(MessageId, State) ->
