@@ -344,6 +344,30 @@ node_list(N, Name, Config) ->
 
 %% @private
 start(_Case, Config, Options) ->
+    StartFun = fun() ->
+                    Nodes = start(Config, Options),
+                    case check_connected_property(Nodes,
+                                                  [{fail, false},
+                                                   {push_list, [eager]}]) of
+                        true -> {true, Nodes};
+                        false ->
+                            stop(Nodes),
+                            {false, node_graph_is_not_connected}
+                    end
+               end,
+    % try a few times to ensure that we have a connected graph on start
+    case wait_until(StartFun, 5, 1000) of
+        {ok, Nodes} ->
+            Nodes;
+        {fail, {false, {not_found, Node}}} ->
+            ct:fail("node ~p never got the control gossip",
+                   [Node]);
+        {fail, {false, {Node, Expected0, Contains0}}} ->
+            ct:fail("node ~p had control value ~p, expected ~p",
+                    [Node, Contains0, Expected0])
+    end.
+
+start(Config, Options) ->
     %% Launch distribution for the test runner.
     ct:pal("Launching Erlang distribution..."),
 
@@ -474,7 +498,9 @@ start(_Case, Config, Options) ->
     lists:foreach(StartFun, Nodes),
 
     ct:pal("Clustering nodes."),
-    lists:foreach(fun(Node) -> cluster(Node, Nodes, Options) end, Nodes),
+    lists:foreach(fun(Node) ->
+                    cluster(Node, Nodes, Options)
+                  end, Nodes),
 
     lists:foreach(fun({_, Node}) ->
                       {ok, Members} = rpc:call(Node,
@@ -485,8 +511,8 @@ start(_Case, Config, Options) ->
                              [Node, Members])
                   end, Nodes),
 
-    ct:pal("Partisan fully initialized."),
-
+    ct:pal("partisan fully initialized, nodes: ~p",
+           [Nodes]),
     Nodes.
 
 %% @private
@@ -669,7 +695,7 @@ check_connected_property(Nodes, Opts) ->
                             Path = digraph:get_short_path(Graph, Root, N),
                             case Path of
                                 false ->
-                                    case proplists:get_value(fail, Opts) of
+                                    case proplists:get_value(fail, Opts, true) of
                                         true ->
                                             ct:fail("Graph is not connected, unable to find route between ~p and ~p",
                                                    [Root, N]),
@@ -705,6 +731,8 @@ wait_until(Fun, Retry, Delay) when Retry > 0 ->
     case Res of
         true ->
             ok;
+        {true, Ret} ->
+            {ok, Ret};
         _ when Retry == 1 ->
             {fail, Res};
         _ ->
