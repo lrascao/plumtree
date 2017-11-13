@@ -1,5 +1,5 @@
 REBAR = rebar3
-.PHONY: compile test travis distclean
+.PHONY: compile test travis distclean coveralls
 
 DIALYZER_APPS = kernel stdlib erts sasl eunit syntax_tools compiler crypto
 DEP_DIR="_build/lib"
@@ -38,3 +38,5 @@ dialyzer:
 distclean:
 	rm -rf _build *.xml rebar3
 
+coveralls:
+	$(REBAR) as test do coveralls send || true

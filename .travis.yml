@@ -9,6 +9,7 @@ script:
   - ./rebar3 update
   - make travis
 after_success:
+  - make coveralls
   - make distclean
 after_failure:
   - make distclean
