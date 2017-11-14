@@ -2,7 +2,7 @@
 [{<<"acceptor_pool">>,{pkg,<<"acceptor_pool">>,<<"1.0.0-rc.0">>},1},
  {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
  {<<"lager">>,{pkg,<<"lager">>,<<"3.5.1">>},0},
- {<<"partisan">>,{pkg,<<"partisan">>,<<"1.0.0">>},0},
+ {<<"partisan">>,{pkg,<<"partisan">>,<<"1.1.0">>},0},
  {<<"rand_compat">>,{pkg,<<"rand_compat">>,<<"0.0.1">>},0},
  {<<"time_compat">>,{pkg,<<"time_compat">>,<<"0.0.1">>},1},
  {<<"types">>,{pkg,<<"types">>,<<"0.1.6">>},1}]}.
@@ -11,7 +11,7 @@
  {<<"acceptor_pool">>, <<"679D741DF87FC13599B1AEF2DF8F78F1F880449A6BEFAB7C44FB6FAE0E92A2DE">>},
  {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>},
  {<<"lager">>, <<"63897A61AF646C59BB928FEE9756CE8BDD02D5A1A2F3551D4A5E38386C2CC071">>},
- {<<"partisan">>, <<"AA53E977FFC64BF176A3D62BA83C1A51F9BBB87E92D55A992E91A03D22A4604D">>},
+ {<<"partisan">>, <<"E09515027D185295244F0F437208DD95DF8AFB3C94E98BD05448AB7E2BBE178F">>},
  {<<"rand_compat">>, <<"624B590931D27252D0BCF710211699DB3695540706F57D2E91B918A17AB58839">>},
  {<<"time_compat">>, <<"23FE0AD1FDF3B5B88821B2D04B4B5E865BF587AE66056D671FE0F53514ED8139">>},
  {<<"types">>, <<"03BB7140016C896D3441A77CB0B7D6ACAA583D6D6E9C4A3E1FD3C25123710290">>}]}
