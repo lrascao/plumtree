@@ -1,10 +1,12 @@
 REBAR = rebar3
-.PHONY: deps compile rel test
+.PHONY: compile test travis distclean
 
 DIALYZER_APPS = kernel stdlib erts sasl eunit syntax_tools compiler crypto
 DEP_DIR="_build/lib"
 
 all: compile
+
+travis: compile test xref dialyzer lint
 
 test: eunit common_test cover
 
@@ -12,6 +14,7 @@ eunit:
 	$(REBAR) eunit
 
 common_test:
+	mkdir -p priv/lager
 	$(REBAR) ct
 
 cover:
@@ -31,3 +34,7 @@ xref:
 
 dialyzer:
 	$(REBAR) dialyzer
+
+distclean:
+	rm -rf _build *.xml rebar3
+

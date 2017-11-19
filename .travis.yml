@@ -7,9 +7,16 @@ before_script:
   - chmod +x rebar3
 script:
   - ./rebar3 update
-  - make compile
-  - make test
-  - make xref
-  - make dialyzer
-  - make lint
+  - make travis
+after_success:
+  - make distclean
+after_failure:
+  - make distclean
 sudo: false
+addons:
+    artifacts: true
+    artifacts:
+        s3_region: "eu-west-1"
+        paths:
+            - ./priv
+        debug: true
