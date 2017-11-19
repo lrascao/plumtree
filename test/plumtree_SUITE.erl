@@ -449,6 +449,9 @@ start(Config, Options) ->
 
             ok = rpc:call(Node, partisan_config, set, [tls, ?config(tls, Config)]),
 
+            ok = rpc:call(Node, partisan_config, set,
+                          [peer_ip, {127,0,0,1}]),
+
             Servers = proplists:get_value(servers, Options, []),
             Clients = proplists:get_value(clients, Options, []),
 
