@@ -342,6 +342,27 @@ node_list(N, Name, Config) ->
                                "_")) ||
         X <- lists:seq(1, N) ].
 
+start_distribution(Hostname) ->
+    StartDisterlFun = fun() ->
+                        case net_kernel:start([list_to_atom("runner@" ++ Hostname),
+                                               shortnames]) of
+                            {ok, _} ->
+                                true;
+                            {error, {already_started, _}} ->
+                                true;
+                            {error, Reason} ->
+                                {false, {unable_to_start_disterl, Reason}}
+                        end
+                      end,
+    % try a few times to ensure that disterl is started
+    case wait_until(StartDisterlFun, 5, 1000) of
+        ok ->
+            ok;
+        {fail, {false, {unable_to_start_disterl, Reason}}} ->
+            ct:fail("unable to start disterl due to ~p",
+                   [Reason])
+    end.
+
 %% @private
 start(_Case, Config, Options) ->
     StartFun = fun() ->
@@ -373,12 +394,7 @@ start(Config, Options) ->
 
     os:cmd(os:find_executable("epmd") ++ " -daemon"),
     {ok, Hostname} = inet:gethostname(),
-    case net_kernel:start([list_to_atom("runner@" ++ Hostname), shortnames]) of
-        {ok, _} ->
-            ok;
-        {error, {already_started, _}} ->
-            ok
-    end,
+    ok = start_distribution(Hostname),
 
     %% Determine what is then current running test case
     TestStatus = ct:get_status(),
