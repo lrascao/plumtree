@@ -380,6 +380,10 @@ start(Config, Options) ->
             ok
     end,
 
+    %% Determine what is then current running test case
+    TestStatus = ct:get_status(),
+    {_Suite, TestCase} = proplists:get_value(current, TestStatus),
+
     %% Load sasl.
     application:load(sasl),
     ok = application:set_env(sasl,
@@ -416,7 +420,7 @@ start(Config, Options) ->
                             ct:pal("Loading applications on node: ~p", [Node]),
 
                             PrivDir = code:priv_dir(?APP),
-                            NodeDir = filename:join([PrivDir, "lager", Node]),
+                            LogDir = filename:join([PrivDir, "lager", atom_to_list(TestCase), Node]),
 
                             %% Manually force sasl loading, and disable the logger.
                             ok = rpc:call(Node, application, load, [sasl]),
@@ -431,7 +435,7 @@ start(Config, Options) ->
                                                                        false]),
                             ok = rpc:call(Node, application, set_env, [lager,
                                                                        log_root,
-                                                                       NodeDir])
+                                                                       LogDir])
                      end,
     lists:map(LoaderFun, Nodes),
 
@@ -448,6 +452,9 @@ start(Config, Options) ->
                           [max_active_size, MaxActiveSize]),
 
             ok = rpc:call(Node, partisan_config, set, [tls, ?config(tls, Config)]),
+
+            ok = rpc:call(Node, partisan_config, set,
+                          [peer_ip, {127,0,0,1}]),
 
             Servers = proplists:get_value(servers, Options, []),
             Clients = proplists:get_value(clients, Options, []),

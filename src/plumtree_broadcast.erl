@@ -854,7 +854,7 @@ send(Msg, Peers, State) when is_list(Peers) ->
     [send(Msg, P, State) || P <- Peers];
 send(Msg, P, #state{name = Name,
                     peer_service_manager = PeerServiceManager}) ->
-    ok = PeerServiceManager:forward_message(P, Name, Msg).
+    ok = PeerServiceManager:cast_message(P, Name, Msg).
 
 schedule_lazy_tick(Period) ->
     schedule_tick(lazy_tick, broadcast_lazy_timer, Period).
