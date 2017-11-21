@@ -2,6 +2,12 @@ language: erlang
 otp_release:
   - 19.3
   - 20.0
+cache:
+  directories:
+  - $HOME/otp/19.3
+  - $HOME/otp/20.0
+  - $HOME/.cache/rebar3
+  - _plt
 before_script:
   - wget https://s3.amazonaws.com/rebar3/rebar3
   - chmod +x rebar3
